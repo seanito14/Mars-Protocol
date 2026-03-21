@@ -1,0 +1,136 @@
+[gd_scene load_steps=3 format=3 uid="uid://d1u2u3u4u5u6u"]
+
+[ext_resource type="Script" path="res://scripts/hud.gd" id="1_script"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_1"]
+bg_color = Color(0, 0, 0, 0.4)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.886275, 0.482353, 0.345098, 0.8)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[node name="HUD" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("1_script")
+
+[node name="LifeSupportPanel" type="PanelContainer" parent="."]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 250.0
+offset_bottom = 120.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_1")
+
+[node name="VBox" type="VBoxContainer" parent="LifeSupportPanel"]
+layout_mode = 2
+theme_override_constants/separation = 5
+
+[node name="O2Value" type="Label" parent="LifeSupportPanel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "O2: 100%"
+
+[node name="TempValue" type="Label" parent="LifeSupportPanel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "TEMP: -60°C"
+
+[node name="Status" type="Label" parent="LifeSupportPanel/VBox"]
+layout_mode = 2
+text = "SUIT: NOMINAL"
+
+[node name="DroneLinkPanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -250.0
+offset_top = 20.0
+offset_right = -20.0
+offset_bottom = 120.0
+grow_horizontal = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_1")
+
+[node name="VBox" type="VBoxContainer" parent="DroneLinkPanel"]
+layout_mode = 2
+theme_override_constants/separation = 5
+
+[node name="Title" type="Label" parent="DroneLinkPanel/VBox"]
+layout_mode = 2
+text = "DRONE LINK"
+horizontal_alignment = 1
+
+[node name="DroneBattery" type="Label" parent="DroneLinkPanel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "BAT: 100%"
+
+[node name="DroneAlt" type="Label" parent="DroneLinkPanel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "ALT: 0.0m"
+
+[node name="DroneStatus" type="Label" parent="DroneLinkPanel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "MODE: STANDBY"
+
+[node name="TelemetryPanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = -70.0
+offset_right = 350.0
+offset_bottom = -20.0
+grow_vertical = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_1")
+
+[node name="CoordsValue" type="Label" parent="TelemetryPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "LAT: 0.0000 | LON: 0.0000"
+horizontal_alignment = 1
+
+[node name="MissionLogPanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -450.0
+offset_top = -250.0
+offset_right = -20.0
+offset_bottom = -20.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_1")
+
+[node name="VBox" type="VBoxContainer" parent="MissionLogPanel"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="MissionLogPanel/VBox"]
+layout_mode = 2
+text = "AI COMMAND CENTER"
+horizontal_alignment = 1
+
+[node name="MissionLog" type="RichTextLabel" parent="MissionLogPanel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+bbcode_enabled = true
+text = ""
+scroll_following = true

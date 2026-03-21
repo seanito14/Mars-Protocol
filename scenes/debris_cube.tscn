@@ -1,0 +1,27 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/debris_cube.gd" id="1_debris"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
+albedo_color = Color(0.97, 0.54, 0.23, 1)
+metallic = 0.15
+roughness = 0.24
+emission_enabled = true
+emission = Color(1, 0.61, 0.28, 1)
+emission_energy_multiplier = 1.4
+
+[sub_resource type="BoxMesh" id="BoxMesh_1"]
+material = SubResource("StandardMaterial3D_1")
+size = Vector3(0.8, 0.8, 0.8)
+
+[node name="DebrisCube" type="Node3D"]
+script = ExtResource("1_debris")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+material_override = SubResource("StandardMaterial3D_1")
+mesh = SubResource("BoxMesh_1")
+
+[node name="OmniLight3D" type="OmniLight3D" parent="."]
+light_color = Color(0.98, 0.55, 0.26, 1)
+light_energy = 1.6
+omni_range = 4.4
