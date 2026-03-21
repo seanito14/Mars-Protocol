@@ -133,7 +133,7 @@ func _process(delta: float) -> void:
 
 	for i in range(BAR_COUNT):
 		var t := float(i) / float(BAR_COUNT - 1)
-		var center_distance := abs(t - 0.5) * 2.0  # 0 at center, 1 at edges
+		var center_distance: float = absf(t - 0.5) * 2.0  # 0 at center, 1 at edges
 
 		# Ambient wave (always running)
 		var ambient := sin(ambient_phase + t * TAU * 2.0) * 0.15 + 0.15

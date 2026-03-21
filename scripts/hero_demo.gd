@@ -27,7 +27,18 @@ const ROCK_LAYOUTS := [
 @onready var voice_service: Node = $VoiceService
 
 var config = HERO_DEMO_CONFIG_SCRIPT.new()
-var terrain_noise: FastNoiseLite
+
+# ── Terrain noise layers ─────────────────────────────────────────────────
+# Each layer targets a different scale of Martian geology:
+#   macro_noise   — broad tectonic warping / basin shape
+#   meso_noise    — mid-scale ridge/dune undulation
+#   detail_noise  — regolith texture & small ejecta
+#   crater_noise  — secondary micro-crater pitting
+var macro_noise: FastNoiseLite
+var meso_noise: FastNoiseLite
+var detail_noise: FastNoiseLite
+var crater_noise: FastNoiseLite
+
 var terrain_size: float = 280.0
 var terrain_height_scale: float = 52.0
 var storm_visuals: Array[MeshInstance3D] = []
@@ -45,13 +56,11 @@ func _ready() -> void:
 	_position_player()
 	voice_service.send_contextual_update("Spawned in the crater basin with a storm on the horizon and two wreck clusters in view.")
 	EventBus.push_mission_log("Hero demo ready. Walk the crater, inspect the wreckage, and talk to Marvin.")
-	# Add SudoAI overlay to the CanvasLayer
 	var canvas_layer := get_node_or_null("CanvasLayer")
 	if canvas_layer:
 		var overlay := SudoAIOverlay.new()
 		overlay.name = "SudoAIOverlay"
 		canvas_layer.add_child(overlay)
-	# Feed initial context to SudoAI
 	if SudoAIAgent and SudoAIAgent.is_connected_to_agent():
 		SudoAIAgent.send_contextual_update("Player has spawned in a Mars crater. Two wreck sites visible. Storm approaching. Press F or say 'Sudo' to talk.")
 
@@ -69,21 +78,21 @@ func get_ground_height(x: float, z: float) -> float:
 	return _sample_height(x, z)
 
 func get_ground_normal(x: float, z: float) -> Vector3:
-	var sample_step := terrain_size / float(TERRAIN_RESOLUTION)
-	var height_left := _sample_height(x - sample_step, z)
-	var height_right := _sample_height(x + sample_step, z)
-	var height_back := _sample_height(x, z - sample_step)
-	var height_forward := _sample_height(x, z + sample_step)
-	return Vector3(height_left - height_right, sample_step * 2.0, height_back - height_forward).normalized()
+	var step := terrain_size / float(TERRAIN_RESOLUTION)
+	var hl := _sample_height(x - step, z)
+	var hr := _sample_height(x + step, z)
+	var hb := _sample_height(x, z - step)
+	var hf := _sample_height(x, z + step)
+	return Vector3(hl - hr, step * 2.0, hb - hf).normalized()
 
 func get_world_half_size() -> float:
 	return terrain_size * 0.5
 
 func get_storm_intensity(position: Vector3, forward: Vector3) -> float:
 	var to_storm: Vector3 = config.storm_center - position
-	var distance_factor := clampf(1.0 - ((to_storm.length() - config.storm_radius) / 190.0), 0.0, 1.0)
-	var direction_factor := clampf(((forward.normalized().dot(to_storm.normalized())) + 1.0) * 0.5, 0.0, 1.0)
-	return clampf((distance_factor * 0.65) + (direction_factor * 0.35), 0.0, 1.0)
+	var dist_factor := clampf(1.0 - ((to_storm.length() - config.storm_radius) / 190.0), 0.0, 1.0)
+	var dir_factor := clampf(((forward.normalized().dot(to_storm.normalized())) + 1.0) * 0.5, 0.0, 1.0)
+	return clampf((dist_factor * 0.65) + (dir_factor * 0.35), 0.0, 1.0)
 
 func trigger_manual_scan(hero_player: Node) -> void:
 	var result: Dictionary = _begin_scan(primary_wreck, hero_player, "manual")
@@ -95,7 +104,6 @@ func trigger_manual_scan(hero_player: Node) -> void:
 func inspect_wreck(wreck: Node, hero_player: Node) -> void:
 	if wreck == null or hero_player == null:
 		return
-
 	wreck.mark_inspected()
 	var response_text := ""
 	if wreck == primary_wreck:
@@ -113,7 +121,6 @@ func inspect_wreck(wreck: Node, hero_player: Node) -> void:
 		EventBus.scan_completed.emit(str(secondary_wreck.get("wreck_name")))
 	else:
 		response_text = str(wreck.get("scan_summary"))
-
 	if hero_player.has_method("set_marvin_state"):
 		hero_player.call("set_marvin_state", "INSPECTION COMPLETE", response_text)
 	if voice_service != null and voice_service.has_method("send_contextual_update"):
@@ -124,11 +131,7 @@ func inspect_wreck(wreck: Node, hero_player: Node) -> void:
 func handle_voice_command(text: String) -> Dictionary:
 	var normalized := text.to_lower().strip_edges()
 	if normalized.is_empty():
-		return {
-			"command_id": "empty",
-			"response_text": "Marvin here. I didn't catch that command.",
-		}
-
+		return { "command_id": "empty", "response_text": "Marvin here. I didn't catch that command." }
 	if normalized.contains("scan"):
 		return _begin_scan(primary_wreck, player, "voice")
 	if normalized.contains("inspect") or normalized.contains("wreckage"):
@@ -137,107 +140,174 @@ func handle_voice_command(text: String) -> Dictionary:
 		return _handle_waypoint_command()
 	if normalized.contains("status"):
 		return _handle_status_command()
-	return {
-		"command_id": "unknown",
-		"response_text": "Available commands are scan, inspect wreckage, mark waypoint, and status.",
-	}
+	return { "command_id": "unknown", "response_text": "Available commands are scan, inspect wreckage, mark waypoint, and status." }
+
+# ── Noise Construction ───────────────────────────────────────────────────
 
 func _build_noise() -> void:
-	terrain_noise = FastNoiseLite.new()
-	terrain_noise.seed = 1935
-	terrain_noise.frequency = 0.008
-	terrain_noise.fractal_type = FastNoiseLite.FRACTAL_FBM
-	terrain_noise.fractal_octaves = 5
-	terrain_noise.fractal_gain = 0.45
-	terrain_noise.fractal_lacunarity = 2.0
+	# Macro: broad tectonic warping, very low frequency
+	macro_noise = FastNoiseLite.new()
+	macro_noise.seed = 1935
+	macro_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	macro_noise.frequency = 0.004
+	macro_noise.fractal_type = FastNoiseLite.FRACTAL_FBM
+	macro_noise.fractal_octaves = 6
+	macro_noise.fractal_gain = 0.50
+	macro_noise.fractal_lacunarity = 2.1
+
+	# Meso: ridgelines, dune trains, aeolian deposits
+	meso_noise = FastNoiseLite.new()
+	meso_noise.seed = 7712
+	meso_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	meso_noise.frequency = 0.014
+	meso_noise.fractal_type = FastNoiseLite.FRACTAL_RIDGED
+	meso_noise.fractal_octaves = 5
+	meso_noise.fractal_gain = 0.48
+	meso_noise.fractal_lacunarity = 2.0
+
+	# Detail: regolith texture, small rocks, ejecta pitting
+	detail_noise = FastNoiseLite.new()
+	detail_noise.seed = 3301
+	detail_noise.noise_type = FastNoiseLite.TYPE_PERLIN
+	detail_noise.frequency = 0.055
+	detail_noise.fractal_type = FastNoiseLite.FRACTAL_FBM
+	detail_noise.fractal_octaves = 4
+	detail_noise.fractal_gain = 0.45
+
+	# Crater pitting: secondary micro-impact craters
+	crater_noise = FastNoiseLite.new()
+	crater_noise.seed = 8821
+	crater_noise.noise_type = FastNoiseLite.TYPE_CELLULAR
+	crater_noise.frequency = 0.038
+	crater_noise.cellular_return_type = FastNoiseLite.RETURN_DISTANCE2_DIV
+	crater_noise.cellular_jitter = 0.92
+
+# ── Height Sampling ──────────────────────────────────────────────────────
+
+func _sample_height(x: float, z: float) -> float:
+	var radial: float = Vector2(x, z).length() / max(terrain_size * 0.5, 0.001)
+
+	# ── 1. Primary impact crater bowl ────────────────────────────────
+	# Complex bowl: steep inner wall, relatively flat floor, raised rim
+	var crater_floor := _smoothstep(0.0, 0.42, radial)
+	var bowl_depth   := -pow(1.0 - clampf(radial / 0.46, 0.0, 1.0), 1.6) * terrain_height_scale * 0.42
+	var rim_peak     := exp(-pow((radial - 0.52) * 9.5, 2.0)) * terrain_height_scale * 0.28
+	# Outer ejecta blanket — raised and rough
+	var ejecta       := _smoothstep(0.55, 1.0, radial) * terrain_height_scale * 0.22
+	# Terraced inner wall — slumped material creates benches
+	var terrace_a    := exp(-pow((radial - 0.22) * 14.0, 2.0)) * 2.8
+	var terrace_b    := exp(-pow((radial - 0.34) * 12.0, 2.0)) * 2.0
+
+	# ── 2. Macro tectonic warping ─────────────────────────────────────
+	# Tilts the whole basin slightly — no perfectly flat craters on Mars
+	var tectonic_tilt  := (x * 0.0042 + z * 0.0018) * terrain_height_scale * 0.06
+	var macro_warp     := macro_noise.get_noise_2d(x, z) * terrain_height_scale * 0.14
+
+	# ── 3. Meso ridges / dune trains ──────────────────────────────────
+	# Ridged noise mimics wind-sculpted yardangs and dune crests
+	var meso_ridge := meso_noise.get_noise_2d(x * 0.9, z * 0.9) * terrain_height_scale * 0.07
+	# Dune trains: long sinuous forms aligned with prevailing wind (≈NW)
+	var dune_a := sin((x * 0.048 - z * 0.022) + 0.6) * 1.6
+	var dune_b := sin((x * 0.022 + z * 0.038) - 1.1) * 1.1
+	var dune_c := sin((x * 0.071 - z * 0.011) + 2.4) * 0.7
+	var dune_roll := (dune_a + dune_b + dune_c) * clampf(1.0 - radial * 0.8, 0.0, 1.0)
+
+	# ── 4. Detail regolith / ejecta texture ───────────────────────────
+	var detail    := detail_noise.get_noise_2d(x * 1.1, z * 1.1) * terrain_height_scale * 0.022
+	var fine_grit := detail_noise.get_noise_2d(x * 3.8 + 41.0, z * 3.8 - 17.0) * terrain_height_scale * 0.006
+
+	# ── 5. Secondary micro-crater pitting ─────────────────────────────
+	# Cellular noise gives the characteristic pockmarked surface of old terrain
+	var pit_raw  := crater_noise.get_noise_2d(x, z)  # ~0..1 from distance2div
+	var pit_mask := clampf(radial * 1.2, 0.0, 1.0)   # more pitting on ejecta apron
+	var pitting  := pit_raw * terrain_height_scale * 0.018 * pit_mask
+
+	# ── 6. Volcanic rise — subtle asymmetric uplift ───────────────────
+	# Mars craters often have an asymmetric floor due to underlying geology
+	var volcanic_rise := exp(-pow((x + 8.0) * 0.022, 2.0) - pow((z + 14.0) * 0.018, 2.0)) * 3.8
+
+	# ── 7. Central peak remnant (low, eroded) ─────────────────────────
+	# Many mid-size craters have a worn central mound
+	var central_peak := exp(-pow(Vector2(x, z).length() * 0.085, 2.0)) * 2.4 * (1.0 - _smoothstep(0.0, 0.18, radial))
+
+	# ── 8. Far horizon ridge ──────────────────────────────────────────
+	var horizon_mask  := clampf((-z - 10.0) / 130.0, 0.0, 1.0)
+	var far_ridge     := horizon_mask * (5.8 + sin(x * 0.031 + 1.2) * 3.1 + macro_noise.get_noise_2d(x * 0.11, -38.0) * 3.4)
+	var left_ridge    := exp(-pow((x + 88.0) * 0.024, 2.0)) * clampf((-z + 18.0) / 148.0, 0.0, 1.0) * 10.2
+	var right_ridge   := exp(-pow((x - 106.0) * 0.021, 2.0)) * clampf((-z + 8.0) / 128.0, 0.0, 1.0) * 7.8
+
+	# ── 9. Compose all layers ─────────────────────────────────────────
+	var height := 38.0
+	height += bowl_depth + rim_peak + ejecta
+	height += terrace_a + terrace_b
+	height += tectonic_tilt + macro_warp
+	height += meso_ridge + dune_roll
+	height += detail + fine_grit + pitting
+	height += volcanic_rise + central_peak
+	height += far_ridge + left_ridge + right_ridge
+
+	# ── 10. Spawn pad flattening (preserve gameplay) ──────────────────
+	var spawn_dist := Vector2(x - config.spawn_position.x, z - config.spawn_position.z).length()
+	if spawn_dist < 20.0:
+		var blend := 1.0 - clampf(spawn_dist / 20.0, 0.0, 1.0)
+		var pad_h  := 39.8 + tectonic_tilt  # keep the tilt so it doesn't feel artificial
+		height = lerpf(height, pad_h, _smoothstep(0.0, 1.0, blend) * 0.92)
+
+	return height
+
+# ── Terrain Mesh Build ───────────────────────────────────────────────────
 
 func _build_playable_terrain() -> void:
 	var grid_width := TERRAIN_RESOLUTION + 1
 	var vertex_count := grid_width * grid_width
 	var vertices := PackedVector3Array()
-	var normals := PackedVector3Array()
-	var uvs := PackedVector2Array()
-	var indices := PackedInt32Array()
+	var normals  := PackedVector3Array()
+	var uvs      := PackedVector2Array()
+	var indices  := PackedInt32Array()
 	vertices.resize(vertex_count)
 	normals.resize(vertex_count)
 	uvs.resize(vertex_count)
 
-	var half_size := terrain_size * 0.5
-	for z_index in range(grid_width):
-		var v := float(z_index) / float(TERRAIN_RESOLUTION)
-		var z := lerpf(-half_size, half_size, v)
-		for x_index in range(grid_width):
-			var u := float(x_index) / float(TERRAIN_RESOLUTION)
-			var x := lerpf(-half_size, half_size, u)
-			var vertex_index := z_index * grid_width + x_index
-			vertices[vertex_index] = Vector3(x, _sample_height(x, z), z)
-			uvs[vertex_index] = Vector2(u, v)
+	var half := terrain_size * 0.5
+	for zi in range(grid_width):
+		var v := float(zi) / float(TERRAIN_RESOLUTION)
+		var z := lerpf(-half, half, v)
+		for xi in range(grid_width):
+			var u := float(xi) / float(TERRAIN_RESOLUTION)
+			var x := lerpf(-half, half, u)
+			var idx := zi * grid_width + xi
+			vertices[idx] = Vector3(x, _sample_height(x, z), z)
+			uvs[idx] = Vector2(u, v)
 
-	for z_index in range(TERRAIN_RESOLUTION):
-		for x_index in range(TERRAIN_RESOLUTION):
-			var top_left := z_index * grid_width + x_index
-			var bottom_left := (z_index + 1) * grid_width + x_index
-			var top_right := top_left + 1
-			var bottom_right := bottom_left + 1
-			indices.push_back(top_left)
-			indices.push_back(bottom_left)
-			indices.push_back(top_right)
-			indices.push_back(top_right)
-			indices.push_back(bottom_left)
-			indices.push_back(bottom_right)
+	for zi in range(TERRAIN_RESOLUTION):
+		for xi in range(TERRAIN_RESOLUTION):
+			var tl := zi * grid_width + xi
+			var bl := (zi + 1) * grid_width + xi
+			var tr := tl + 1
+			var br := bl + 1
+			indices.push_back(tl); indices.push_back(bl); indices.push_back(tr)
+			indices.push_back(tr); indices.push_back(bl); indices.push_back(br)
 
-	for triangle_index in range(0, indices.size(), 3):
-		var a := indices[triangle_index]
-		var b := indices[triangle_index + 1]
-		var c := indices[triangle_index + 2]
-		var face_normal := (vertices[b] - vertices[a]).cross(vertices[c] - vertices[a]).normalized()
-		normals[a] += face_normal
-		normals[b] += face_normal
-		normals[c] += face_normal
+	for ti in range(0, indices.size(), 3):
+		var a := indices[ti]; var b := indices[ti + 1]; var c := indices[ti + 2]
+		var fn := (vertices[b] - vertices[a]).cross(vertices[c] - vertices[a]).normalized()
+		normals[a] += fn; normals[b] += fn; normals[c] += fn
 
-	for vertex_index in range(normals.size()):
-		normals[vertex_index] = normals[vertex_index].normalized()
+	for vi in range(normals.size()):
+		normals[vi] = normals[vi].normalized()
 
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
+	var arrays := []; arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
-	arrays[Mesh.ARRAY_INDEX] = indices
+	arrays[Mesh.ARRAY_INDEX]  = indices
 
-	var terrain_mesh := ArrayMesh.new()
-	terrain_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	terrain.mesh = terrain_mesh
-	terrain_collision.shape = terrain_mesh.create_trimesh_shape()
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	terrain.mesh = mesh
+	terrain_collision.shape = mesh.create_trimesh_shape()
 
-func _sample_height(x: float, z: float) -> float:
-	var radial: float = Vector2(x, z).length() / max((terrain_size * 0.5), 0.001)
-	var basin_mask := clampf(1.0 - radial, 0.0, 1.0)
-	var basin := -pow(basin_mask, 1.45) * terrain_height_scale * 0.18
-	var broad_noise := terrain_noise.get_noise_2d(x * 0.48, z * 0.48) * terrain_height_scale * 0.08
-	var medium_noise := terrain_noise.get_noise_2d((x * 1.18) + 41.0, (z * 1.18) - 63.0) * terrain_height_scale * 0.028
-	var detail_noise := terrain_noise.get_noise_2d((x * 3.2) + 11.0, (z * 3.2) - 22.0) * terrain_height_scale * 0.008
-
-	var foreground_flatten := -exp(-pow((z - 8.0) * 0.028, 2.0)) * 2.8
-	var central_corridor := -exp(-pow((x - 2.0) * 0.04, 2.0)) * 2.2 * clampf(1.0 - ((z + 12.0) / 170.0), 0.0, 1.0)
-	var dune_rolls := sin((x * 0.065) - (z * 0.018) + 0.8) * 1.2
-	dune_rolls += sin((x * 0.028) + (z * 0.024) - 1.6) * 0.9
-	dune_rolls *= clampf(0.35 + (basin_mask * 0.75), 0.0, 1.0)
-
-	var horizon_mask := clampf((-z - 8.0) / 138.0, 0.0, 1.0)
-	var far_ridge := horizon_mask * (5.2 + (sin((x * 0.032) + 1.3) * 2.8) + (terrain_noise.get_noise_2d(x * 0.12, -41.0) * 3.2))
-	var left_ridge := exp(-pow((x + 86.0) * 0.024, 2.0)) * clampf((-z + 20.0) / 150.0, 0.0, 1.0) * 9.5
-	var right_ridge := exp(-pow((x - 104.0) * 0.021, 2.0)) * clampf((-z + 10.0) / 130.0, 0.0, 1.0) * 7.0
-	var mid_dune := exp(-pow((x - 18.0) * 0.03, 2.0)) * exp(-pow((z + 24.0) * 0.028, 2.0)) * 4.6
-
-	var height := 37.0 + basin + broad_noise + medium_noise + detail_noise
-	height += foreground_flatten + central_corridor + dune_rolls + far_ridge + left_ridge + right_ridge + mid_dune
-
-	var spawn_distance := Vector2(x - config.spawn_position.x, z - config.spawn_position.z).length()
-	if spawn_distance < 22.0:
-		var pad_blend := 1.0 - clampf(spawn_distance / 22.0, 0.0, 1.0)
-		height = lerpf(height, 39.8, pad_blend * 0.9)
-	return height
+# ── Scene population (unchanged from original) ──────────────────────────
 
 func _position_player() -> void:
 	player.global_position = config.spawn_position
@@ -329,13 +399,11 @@ func _populate_rock_multimesh(multimesh: MultiMesh, count: int, scale_min: float
 		var z: float = rng.randf_range(-half_size, half_size)
 		if _is_reserved_rock_zone(Vector3(x, 0.0, z), reserve_padding):
 			continue
-
 		var ground_normal: Vector3 = get_ground_normal(x, z)
 		var slope: float = 1.0 - ground_normal.y
 		if slope > max_slope:
 			continue
-
-		var scale_bias: float = 0.76 + (abs(terrain_noise.get_noise_2d((x * 1.4) + 21.0, (z * 1.4) - 9.0)) * 0.5)
+		var scale_bias: float = 0.76 + (abs(macro_noise.get_noise_2d((x * 1.4) + 21.0, (z * 1.4) - 9.0)) * 0.5)
 		var scale: float = rng.randf_range(scale_min, scale_max) * scale_bias
 		var rotation_basis: Basis = Basis.from_euler(Vector3(
 			rng.randf_range(-0.14, 0.14),
@@ -350,22 +418,15 @@ func _populate_rock_multimesh(multimesh: MultiMesh, count: int, scale_min: float
 		var rock_height: float = _sample_height(x, z) + clearance
 		multimesh.set_instance_transform(filled, Transform3D(rotation_basis * scale_basis, Vector3(x, rock_height, z)))
 		filled += 1
-
 	multimesh.visible_instance_count = filled
 
 func _is_reserved_rock_zone(position: Vector3, padding: float) -> bool:
-	if position.distance_to(config.spawn_position) < 24.0 + padding:
-		return true
-	if position.distance_to(config.primary_wreck_position) < 14.0 + padding:
-		return true
-	if position.distance_to(config.secondary_wreck_position) < 14.0 + padding:
-		return true
-	if position.distance_to(config.rover_position) < 10.0 + padding:
-		return true
-	if position.distance_to(config.drone_position) < 10.0 + padding:
-		return true
-	if abs(position.x - 2.0) < 4.5 and position.z > -8.0 and position.z < 92.0:
-		return true
+	if position.distance_to(config.spawn_position) < 24.0 + padding: return true
+	if position.distance_to(config.primary_wreck_position) < 14.0 + padding: return true
+	if position.distance_to(config.secondary_wreck_position) < 14.0 + padding: return true
+	if position.distance_to(config.rover_position) < 10.0 + padding: return true
+	if position.distance_to(config.drone_position) < 10.0 + padding: return true
+	if abs(position.x - 2.0) < 4.5 and position.z > -8.0 and position.z < 92.0: return true
 	return false
 
 func _place_node(node: Node3D, position: Vector3, clearance: float) -> void:
@@ -377,7 +438,6 @@ func _build_storm_column() -> void:
 	storm_root.name = "StormFront"
 	props_root.add_child(storm_root)
 	storm_root.global_position = Vector3(config.storm_center.x, _sample_height(config.storm_center.x, config.storm_center.z), config.storm_center.z)
-
 	for index in range(6):
 		var storm_mesh := MeshInstance3D.new()
 		var cylinder := CylinderMesh.new()
@@ -399,22 +459,17 @@ func _build_storm_column() -> void:
 		storm_root.add_child(storm_mesh)
 		storm_visuals.append(storm_mesh)
 
+# ── Voice / command helpers (unchanged) ─────────────────────────────────
+
 func _begin_scan(target: Node, hero_player: Node, source: String) -> Dictionary:
 	if target == null:
-		return {
-			"command_id": "scan",
-			"response_text": "No wreck signature is available right now.",
-		}
-
+		return { "command_id": "scan", "response_text": "No wreck signature is available right now." }
 	target.begin_highlight(10.0)
 	_set_waypoint_target(target, str(target.get("waypoint_name")), hero_player)
 	if voice_service != null and voice_service.has_method("send_contextual_update"):
 		voice_service.call("send_contextual_update", "Targeting %s from %s command." % [str(target.get("wreck_name")), source])
 	EventBus.scan_started.emit(str(target.get("wreck_name")))
-	return {
-		"command_id": "scan",
-		"response_text": "Scanning locked. Highlighting %s on your visor now." % str(target.get("wreck_name")),
-	}
+	return { "command_id": "scan", "response_text": "Scanning locked. Highlighting %s on your visor now." % str(target.get("wreck_name")) }
 
 func _handle_inspect_command() -> Dictionary:
 	var focus_target: Node = primary_wreck
@@ -422,40 +477,22 @@ func _handle_inspect_command() -> Dictionary:
 	if current_focus != null and current_focus is Node and current_focus.has_method("mark_inspected"):
 		focus_target = current_focus
 	if focus_target == null:
-		return {
-			"command_id": "inspect",
-			"response_text": "No wreckage is centered in your visor. Move closer or ask me to mark the waypoint.",
-		}
+		return { "command_id": "inspect", "response_text": "No wreckage is centered in your visor. Move closer or ask me to mark the waypoint." }
 	if focus_target == primary_wreck and not bool(primary_wreck.get("inspected")):
-		return {
-			"command_id": "inspect",
-			"response_text": "Primary wreck is ready for inspection. Close the gap and interact with the hull panel.",
-		}
+		return { "command_id": "inspect", "response_text": "Primary wreck is ready for inspection. Close the gap and interact with the hull panel." }
 	if focus_target == secondary_wreck and not bool(secondary_wreck.get("inspected")):
-		return {
-			"command_id": "inspect",
-			"response_text": "Secondary wreck is ready. Move in and inspect the exposed relay spine.",
-		}
-	return {
-		"command_id": "inspect",
-		"response_text": "Wreckage notes are already logged. You can keep exploring or request status.",
-	}
+		return { "command_id": "inspect", "response_text": "Secondary wreck is ready. Move in and inspect the exposed relay spine." }
+	return { "command_id": "inspect", "response_text": "Wreckage notes are already logged. You can keep exploring or request status." }
 
 func _handle_waypoint_command() -> Dictionary:
 	var target: Node = primary_wreck
 	if primary_wreck != null and bool(primary_wreck.get("inspected")) and secondary_wreck != null and not bool(secondary_wreck.get("inspected")):
 		target = secondary_wreck
 	if target == null:
-		return {
-			"command_id": "waypoint",
-			"response_text": "No waypoint target is available.",
-		}
+		return { "command_id": "waypoint", "response_text": "No waypoint target is available." }
 	target.begin_highlight(8.0)
 	_set_waypoint_target(target, str(target.get("waypoint_name")), player)
-	return {
-		"command_id": "waypoint",
-		"response_text": "Waypoint pinned to %s." % str(target.get("wreck_name")),
-	}
+	return { "command_id": "waypoint", "response_text": "Waypoint pinned to %s." % str(target.get("wreck_name")) }
 
 func _handle_status_command() -> Dictionary:
 	var waypoint_text := active_waypoint_label()
@@ -464,10 +501,7 @@ func _handle_status_command() -> Dictionary:
 		GameState.get_storm_eta_label(),
 		waypoint_text,
 	]
-	return {
-		"command_id": "status",
-		"response_text": response_text,
-	}
+	return { "command_id": "status", "response_text": response_text }
 
 func _set_waypoint_target(target: Node3D, label: String, hero_player: Node) -> void:
 	current_waypoint = target
@@ -475,12 +509,11 @@ func _set_waypoint_target(target: Node3D, label: String, hero_player: Node) -> v
 		hero_player.call("set_waypoint_target", target, label)
 
 func active_waypoint_label() -> String:
-	if current_waypoint == null:
-		return "no active mark"
+	if current_waypoint == null: return "no active mark"
 	if current_waypoint.has_method("get_interaction_name"):
 		return str(current_waypoint.call("get_interaction_name"))
 	return current_waypoint.name
 
 func _smoothstep(edge0: float, edge1: float, value: float) -> float:
 	var t := clampf((value - edge0) / max(edge1 - edge0, 0.001), 0.0, 1.0)
-	return t * t * (3.0 - (2.0 * t))
+	return t * t * (3.0 - 2.0 * t)

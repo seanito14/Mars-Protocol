@@ -18,6 +18,11 @@ config/name="ProjectMarsHighFidelity"
 run/main_scene="res://scenes/opening_intro.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 
+[audio]
+
+general/text_to_speech=true
+driver/enable_input=true
+
 [autoload]
 
 EventBus="*res://scripts/event_bus.gd"

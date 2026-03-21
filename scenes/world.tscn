@@ -4,7 +4,7 @@
 [ext_resource type="Script" path="res://scripts/player.gd" id="2_player"]
 [ext_resource type="PackedScene" uid="uid://c7y7y7y7y7y7y" path="res://scenes/rover.tscn" id="3_rover"]
 [ext_resource type="PackedScene" uid="uid://d1u2u3u4u5u6u" path="res://scenes/hud.tscn" id="4_hud"]
-[ext_resource type="PackedScene" uid="uid://dw7x8x8x8x8x8" path="res://scenes/drone.tscn" id="5_drone"]
+[ext_resource type="PackedScene" uid="uid://ddy6s8xndhdw4" path="res://scenes/drone.tscn" id="5_drone"]
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_1"]
 noise_type = 3
@@ -97,7 +97,11 @@ script = ExtResource("2_player")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
 shape = SubResource("CapsuleShape3D_1")
 
-[node name="Camera3D" type="Camera3D" parent="Player"]
+[node name="TiltPivot" type="Node3D" parent="Player"]
+
+[node name="PitchPivot" type="Node3D" parent="Player/TiltPivot"]
+
+[node name="Camera3D" type="Camera3D" parent="Player/TiltPivot/PitchPivot"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, 0)
 current = true
 fov = 80.0

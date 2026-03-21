@@ -121,12 +121,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			if voice_service != null and voice_service.has_method("toggle_listening"):
 				voice_service.call("toggle_listening")
 		elif key_event.physical_keycode == KEY_F:
-			# SudoAI push-to-talk toggle
-			if SudoAIAgent and SudoAIAgent.is_connected_to_agent():
-				if SudoAIAgent.hot_word_active:
-					SudoAIAgent.deactivate_hot_word()
-				else:
-					SudoAIAgent.activate_hot_word()
+			_toggle_sudo_ai_activation()
+		return
+
+	if event is InputEventJoypadButton:
+		var joypad_event := event as InputEventJoypadButton
+		if joypad_event.pressed and joypad_event.button_index == JOY_BUTTON_X:
+			_toggle_sudo_ai_activation()
+			get_viewport().set_input_as_handled()
 
 func _physics_process(delta: float) -> void:
 	var ground_height := _get_ground_height()
@@ -197,6 +199,13 @@ func request_scan() -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("trigger_manual_scan"):
 		scene.call("trigger_manual_scan", self)
+
+func _toggle_sudo_ai_activation() -> void:
+	if SudoAIAgent and SudoAIAgent.is_connected_to_agent():
+		if SudoAIAgent.hot_word_active:
+			SudoAIAgent.deactivate_hot_word()
+		else:
+			SudoAIAgent.activate_hot_word()
 
 func set_waypoint_target(target: Node3D, label: String) -> void:
 	active_waypoint_target = target
@@ -333,7 +342,7 @@ func _update_interaction_focus() -> void:
 
 func _handle_interaction_input() -> void:
 	var keyboard_interact := Input.is_physical_key_pressed(KEY_E)
-	var joy_interact := Input.is_joy_button_pressed(joy_id, JOY_BUTTON_X)
+	var joy_interact := Input.is_joy_button_pressed(joy_id, JOY_BUTTON_B)
 	var interact_pressed := keyboard_interact or joy_interact
 	if focused_interactable == null:
 		interact_was_pressed = interact_pressed
@@ -382,17 +391,17 @@ func _update_presentation(delta: float, input_dir: Vector2, is_grounded: bool, i
 	camera.fov = lerpf(camera.fov, base_camera_fov + (RUN_FOV_BOOST * move_strength if is_running else 0.0), delta * MOTION_SMOOTHNESS)
 
 	if left_arm_root != null:
-		left_arm_root.position = Vector3(-0.32, -0.44 + (breath_wave * 0.025) + (bob_offset.y * 0.8), -0.62 + (move_strength * 0.03))
-		left_arm_root.rotation = Vector3(-0.56 + (breath_wave * 0.03), 0.14 + (input_dir.x * 0.08), -0.22 + (breath_wave * 0.02))
+		left_arm_root.position = Vector3(-0.46, -0.62 + (breath_wave * 0.02) + (bob_offset.y * 0.4), -0.76 + (move_strength * 0.02))
+		left_arm_root.rotation = Vector3(-0.72 + (breath_wave * 0.024), 0.1 + (input_dir.x * 0.05), -0.32 + (breath_wave * 0.018))
 	if left_hand_root != null:
 		left_hand_root.rotation = Vector3(-0.2 + (sin(head_bob_time) * 0.08), 0.0, -0.1 - (breath_wave * 0.06))
 	if scanner_root != null:
-		scanner_root.position = Vector3(0.0, -0.58 + (breath_wave * 0.016), -0.8)
+		scanner_root.position = Vector3(0.0, -0.72 + (breath_wave * 0.012), -0.92)
 		scanner_root.rotation = Vector3(-0.12 + (breath_wave * 0.01), 0.0, 0.0)
 	if scanner_screen_material != null:
 		scanner_screen_material.emission_energy_multiplier = 1.3 + (storm_intensity * 1.1) + (move_strength * 0.4)
 	if visor_glass_material != null:
-		visor_glass_material.albedo_color.a = 0.1 + (storm_intensity * 0.16)
+		visor_glass_material.albedo_color.a = 0.025 + (storm_intensity * 0.035)
 
 func _build_suit_rig() -> void:
 	var suit_root := Node3D.new()
@@ -405,10 +414,10 @@ func _build_suit_rig() -> void:
 	frame_material.metallic = 0.3
 
 	visor_glass_material = StandardMaterial3D.new()
-	visor_glass_material.albedo_color = Color(0.1, 0.16, 0.18, 0.16)
+	visor_glass_material.albedo_color = Color(0.1, 0.16, 0.18, 0.025)
 	visor_glass_material.emission_enabled = true
 	visor_glass_material.emission = Color(0.08, 0.2, 0.22, 1.0)
-	visor_glass_material.emission_energy_multiplier = 0.35
+	visor_glass_material.emission_energy_multiplier = 0.08
 	visor_glass_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	visor_glass_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 
@@ -423,22 +432,14 @@ func _build_suit_rig() -> void:
 	suit_fabric_material.albedo_color = Color(0.8, 0.78, 0.74, 1.0)
 	suit_fabric_material.roughness = 0.98
 
-	var top_rail := _create_box_mesh(Vector3(0.78, 0.06, 0.14), frame_material)
-	top_rail.position = Vector3(0.0, 0.5, -0.78)
-	suit_root.add_child(top_rail)
-
-	var lower_frame := _create_box_mesh(Vector3(0.54, 0.04, 0.08), frame_material)
-	lower_frame.position = Vector3(0.0, -0.44, -0.72)
-	suit_root.add_child(lower_frame)
-
-	var visor_glass := _create_box_mesh(Vector3(1.0, 0.92, 0.02), visor_glass_material)
-	visor_glass.position = Vector3(0.0, 0.02, -0.84)
-	suit_root.add_child(visor_glass)
+	# The visor framing now lives in the 2D HUD overlay, so keep the
+	# first-person rig lighter to avoid obscuring the scene.
+	# The visor framing is now handled in the HUD overlay.
 
 	scanner_root = Node3D.new()
 	scanner_root.name = "ChestScanner"
 	suit_root.add_child(scanner_root)
-	scanner_root.position = Vector3(0.0, -0.58, -0.82)
+	scanner_root.position = Vector3(0.0, -0.72, -0.92)
 
 	var scanner_body := _create_box_mesh(Vector3(0.48, 0.14, 0.18), frame_material)
 	scanner_root.add_child(scanner_body)
@@ -450,8 +451,8 @@ func _build_suit_rig() -> void:
 	left_arm_root = Node3D.new()
 	left_arm_root.name = "LeftArmRoot"
 	suit_root.add_child(left_arm_root)
-	left_arm_root.position = Vector3(-0.32, -0.44, -0.62)
-	left_arm_root.rotation = Vector3(-0.56, 0.14, -0.22)
+	left_arm_root.position = Vector3(-0.46, -0.62, -0.76)
+	left_arm_root.rotation = Vector3(-0.72, 0.1, -0.32)
 
 	var upper_arm := _create_capsule_mesh(0.072, 0.42, suit_fabric_material)
 	upper_arm.rotation = Vector3(0.0, 0.0, deg_to_rad(90.0))
