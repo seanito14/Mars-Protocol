@@ -4,9 +4,29 @@
 [ext_resource type="Script" uid="uid://5ta56j7jbggl" path="res://scripts/hero_demo.gd" id="2_world"]
 [ext_resource type="Script" uid="uid://djkgkslsguius" path="res://scripts/hero_player.gd" id="3_player"]
 [ext_resource type="PackedScene" path="res://scenes/hero_hud.tscn" id="4_hud"]
-[ext_resource type="Script" uid="uid://ck3qiflg6scht" path="res://scripts/hero_voice_service.gd" id="5_voice"]
+
+[sub_resource type="PhysicalSkyMaterial" id="PhysicalSkyMaterial_hero"]
+rayleigh_color = Color(0.88, 0.72, 0.58, 1)
+mie_color = Color(0.96, 0.84, 0.68, 1)
+turbidity = 10.8
+ground_color = Color(0.18, 0.1, 0.06, 1)
+
+[sub_resource type="Sky" id="Sky_hero"]
+sky_material = SubResource("PhysicalSkyMaterial_hero")
 
 [sub_resource type="Environment" id="Environment_0ot1b"]
+background_mode = 2
+sky = SubResource("Sky_hero")
+ambient_light_source = 2
+ambient_light_color = Color(0.2, 0.13, 0.08, 1)
+tonemap_mode = 3
+fog_enabled = true
+fog_light_color = Color(0.82, 0.66, 0.52, 1)
+fog_density = 0.00038
+fog_aerial_perspective = 0.26
+fog_sun_scatter = 0.22
+fog_height = 0.0
+fog_height_density = 0.045
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_1"]
 noise_type = 3
@@ -25,11 +45,13 @@ render_priority = 0
 shader = ExtResource("1_shader")
 shader_parameter/height_map = SubResource("NoiseTexture2D_1")
 shader_parameter/height_scale = 90.0
-shader_parameter/dust_color = Color(0.62, 0.26, 0.13, 1)
-shader_parameter/rock_color = Color(0.11, 0.09, 0.09, 1)
+shader_parameter/dust_color = Color(0.68, 0.39, 0.2, 1)
+shader_parameter/cliff_color = Color(0.48, 0.23, 0.13, 1)
+shader_parameter/rock_color = Color(0.26, 0.14, 0.09, 1)
+shader_parameter/shadow_tint = Color(0.14, 0.06, 0.04, 1)
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_1"]
-size = Vector2(280, 280)
+size = Vector2(520, 520)
 subdivide_width = 768
 subdivide_depth = 768
 
@@ -42,14 +64,16 @@ script = ExtResource("2_world")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=441509805]
 transform = Transform3D(0.9374439, 0.02604682, 0.34735024, -0.34195107, -0.11764252, 0.9322643, 0.066214845, -0.9926551, -0.101163715, 0, 42, 0)
-light_color = Color(0.8202836, 0.38704768, 1, 1)
-light_energy = 2.7
+light_color = Color(1, 0.88, 0.74, 1)
+light_energy = 2.65
 shadow_enabled = true
+directional_shadow_max_distance = 1800.0
 
 [node name="FillLight" type="DirectionalLight3D" parent="." unique_id=870450291]
 transform = Transform3D(0.72, 0, -0.69, -0.12, 0.99, -0.13, 0.68, 0.18, 0.71, 0, 18, 0)
-light_color = Color(0.4906882, 0.45736456, 0.21840283, 1)
-light_energy = 0.42
+light_color = Color(0.78, 0.58, 0.42, 1)
+light_energy = 0.14
+shadow_enabled = false
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=383650894]
 environment = SubResource("Environment_0ot1b")
@@ -57,9 +81,6 @@ environment = SubResource("Environment_0ot1b")
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1687721307]
 
 [node name="HUD" parent="CanvasLayer" unique_id=1502898770 instance=ExtResource("4_hud")]
-
-[node name="VoiceService" type="Node" parent="." unique_id=2012886525]
-script = ExtResource("5_voice")
 
 [node name="Props" type="Node3D" parent="." unique_id=1530098524]
 
@@ -69,7 +90,7 @@ script = ExtResource("5_voice")
 material_override = SubResource("ShaderMaterial_1")
 visibility_range_begin = 4.35
 visibility_range_begin_margin = 7.3
-visibility_range_end = 851.64
+visibility_range_end = 1851.64
 mesh = SubResource("PlaneMesh_1")
 
 [node name="StaticBody3D" type="StaticBody3D" parent="TerrainRoot/Terrain" unique_id=757149062]

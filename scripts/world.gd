@@ -148,6 +148,103 @@ func _build_playable_terrain() -> void:
 	terrain_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	terrain.mesh = terrain_mesh
 	terrain_collision.shape = terrain_mesh.create_trimesh_shape()
+	_build_terrain_underside_seal(vertices, grid_width)
+
+func _build_terrain_underside_seal(vertices: PackedVector3Array, grid_width: int) -> void:
+	if vertices.is_empty():
+		return
+	var terrain_root := terrain.get_parent() as Node3D
+	if terrain_root == null:
+		return
+
+	var old_skirt := terrain_root.get_node_or_null("TerrainEdgeSkirt")
+	if old_skirt != null:
+		old_skirt.queue_free()
+	var old_cap := terrain_root.get_node_or_null("TerrainSubFloorCap")
+	if old_cap != null:
+		old_cap.queue_free()
+
+	var min_height := INF
+	for vertex in vertices:
+		min_height = minf(min_height, vertex.y)
+	var seal_floor_y := min_height - maxf(terrain_height_scale * 2.0, 80.0)
+
+	var border_indices: Array[int] = []
+	var last := grid_width - 1
+	for x_index in range(grid_width):
+		border_indices.append(x_index)
+	for z_index in range(1, grid_width):
+		border_indices.append((z_index * grid_width) + last)
+	for x_index in range(last - 1, -1, -1):
+		border_indices.append((last * grid_width) + x_index)
+	for z_index in range(last - 1, 0, -1):
+		border_indices.append(z_index * grid_width)
+	if border_indices.size() < 3:
+		return
+
+	var skirt_vertices := PackedVector3Array()
+	var skirt_normals := PackedVector3Array()
+	var skirt_indices := PackedInt32Array()
+	for border_index in range(border_indices.size()):
+		var a_index := border_indices[border_index]
+		var b_index := border_indices[(border_index + 1) % border_indices.size()]
+		var top_a := vertices[a_index]
+		var top_b := vertices[b_index]
+		var bottom_a := Vector3(top_a.x, seal_floor_y, top_a.z)
+		var bottom_b := Vector3(top_b.x, seal_floor_y, top_b.z)
+		var edge := top_b - top_a
+		var outward := Vector3(edge.z, 0.0, -edge.x).normalized()
+		if outward.length_squared() < 0.0001:
+			outward = Vector3.UP
+
+		var base_index := skirt_vertices.size()
+		skirt_vertices.push_back(top_a)
+		skirt_vertices.push_back(bottom_a)
+		skirt_vertices.push_back(top_b)
+		skirt_vertices.push_back(bottom_b)
+		for normal_index in range(4):
+			skirt_normals.push_back(outward)
+		skirt_indices.push_back(base_index)
+		skirt_indices.push_back(base_index + 1)
+		skirt_indices.push_back(base_index + 2)
+		skirt_indices.push_back(base_index + 2)
+		skirt_indices.push_back(base_index + 1)
+		skirt_indices.push_back(base_index + 3)
+
+	var skirt_arrays := []
+	skirt_arrays.resize(Mesh.ARRAY_MAX)
+	skirt_arrays[Mesh.ARRAY_VERTEX] = skirt_vertices
+	skirt_arrays[Mesh.ARRAY_NORMAL] = skirt_normals
+	skirt_arrays[Mesh.ARRAY_INDEX] = skirt_indices
+
+	var skirt_mesh := ArrayMesh.new()
+	skirt_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, skirt_arrays)
+	var seal_material := _make_terrain_seal_material()
+
+	var skirt_instance := MeshInstance3D.new()
+	skirt_instance.name = "TerrainEdgeSkirt"
+	skirt_instance.mesh = skirt_mesh
+	skirt_instance.material_override = seal_material
+	skirt_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	terrain_root.add_child(skirt_instance)
+
+	var cap_instance := MeshInstance3D.new()
+	cap_instance.name = "TerrainSubFloorCap"
+	var cap_mesh := PlaneMesh.new()
+	cap_mesh.size = Vector2(terrain_size * 1.35, terrain_size * 1.35)
+	cap_instance.mesh = cap_mesh
+	cap_instance.position = Vector3(0.0, seal_floor_y + 1.0, 0.0)
+	cap_instance.material_override = seal_material.duplicate()
+	cap_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	terrain_root.add_child(cap_instance)
+
+func _make_terrain_seal_material() -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(0.18, 0.08, 0.05, 1.0)
+	material.roughness = 0.99
+	material.metallic = 0.0
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return material
 
 func _place_actor_on_terrain(actor: CharacterBody3D) -> void:
 	if actor == null:

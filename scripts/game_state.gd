@@ -11,6 +11,7 @@ const UPGRADE_COSTS := {
 	"oxygen_capacity": [3, 5, 8],
 	"suit_durability": [3, 5, 8],
 }
+const SAVE_PATH: String = "user://savegame.json"
 
 var salvage_cubes: int = 0
 var upgrade_levels := {
@@ -28,6 +29,12 @@ var mission_clock_seconds: float = float((14 * 3600) + (37 * 60))
 var storm_eta_seconds: float = float((4 * 3600) + (22 * 60))
 var respawn_position: Vector3 = Vector3.ZERO
 var respawn_yaw: float = 0.0
+
+# Session stats for game over summary
+var rocks_surveyed: int = 0
+var drones_deployed: int = 0
+var distance_walked: float = 0.0
+var is_paused: bool = false
 var basecamp_terminal_open: bool = false
 var paywall_visible: bool = false
 var paywall_context: String = ""
@@ -35,6 +42,69 @@ var paywall_context: String = ""
 func _process(delta: float) -> void:
 	mission_clock_seconds += delta
 	storm_eta_seconds = max(storm_eta_seconds - (delta * 0.35), 0.0)
+
+func save_game() -> void:
+	var data := {
+		"salvage_cubes": salvage_cubes,
+		"upgrade_levels": upgrade_levels,
+		"sol_day": sol_day,
+		"clone_iteration": clone_iteration
+	}
+	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(data))
+
+func load_game() -> bool:
+	if not FileAccess.file_exists(SAVE_PATH):
+		return false
+	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if not file:
+		return false
+	var text := file.get_as_text()
+	var json := JSON.new()
+	var err := json.parse(text)
+	if err == OK:
+		var data = json.data
+		if typeof(data) == TYPE_DICTIONARY:
+			salvage_cubes = int(data.get("salvage_cubes", 0))
+			if data.has("upgrade_levels") and typeof(data["upgrade_levels"]) == TYPE_DICTIONARY:
+				upgrade_levels = data["upgrade_levels"]
+			sol_day = int(data.get("sol_day", 247))
+			clone_iteration = int(data.get("clone_iteration", 14))
+			return true
+	return false
+
+func reset_game() -> void:
+	salvage_cubes = 0
+	upgrade_levels = {
+		"oxygen_capacity": 0,
+		"suit_durability": 0,
+	}
+	sol_day = 247
+	clone_iteration = 1
+	mission_clock_seconds = float((14 * 3600) + (37 * 60))
+	storm_eta_seconds = float((4 * 3600) + (22 * 60))
+	rocks_surveyed = 0
+	drones_deployed = 0
+	distance_walked = 0.0
+
+func reset_session_stats() -> void:
+	rocks_surveyed = 0
+	drones_deployed = 0
+	distance_walked = 0.0
+
+func add_rock_surveyed() -> void:
+	rocks_surveyed += 1
+
+func add_drone_deployed() -> void:
+	drones_deployed += 1
+
+func add_distance(dist: float) -> void:
+	distance_walked += dist
+
+func set_paused(paused: bool) -> void:
+	is_paused = paused
+	get_tree().paused = paused
 
 func add_salvage_cubes(amount: int) -> void:
 	salvage_cubes = max(salvage_cubes + amount, 0)
@@ -65,6 +135,7 @@ func purchase_upgrade(upgrade_id: String) -> bool:
 	upgrade_levels[upgrade_id] = level + 1
 	EventBus.upgrade_purchased.emit(upgrade_id, int(upgrade_levels[upgrade_id]), salvage_cubes)
 	EventBus.push_mission_log("%s upgraded to level %d." % [_get_upgrade_name(upgrade_id), int(upgrade_levels[upgrade_id])])
+	save_game()
 	return true
 
 func get_max_oxygen() -> float:
@@ -138,6 +209,10 @@ func get_clone_iteration() -> int:
 
 func advance_clone_iteration() -> void:
 	clone_iteration += 1
+	sol_day += 1
+	mission_clock_seconds = float((14 * 3600) + (37 * 60))
+	storm_eta_seconds = float((4 * 3600) + (22 * 60))
+	save_game()
 
 func get_mission_clock_label() -> String:
 	return _format_clock(mission_clock_seconds)

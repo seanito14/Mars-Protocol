@@ -132,7 +132,7 @@ func _physics_process(delta: float) -> void:
 		failure_timer -= delta
 		velocity = Vector3.ZERO
 		if failure_timer <= 0.0:
-			_respawn_from_basecamp()
+			get_tree().change_scene_to_file("res://scenes/game_over.tscn")
 		return
 
 	var ground_height := _get_ground_height()
@@ -185,6 +185,7 @@ func _physics_process(delta: float) -> void:
 		velocity.y = 0.0
 
 	_clamp_to_world()
+	_enforce_ground_floor()
 	_update_status(delta, input_strength, is_running)
 	_update_interaction_focus()
 	if not input_locked:
@@ -369,6 +370,12 @@ func _clamp_to_world() -> void:
 	global_position.x = clampf(global_position.x, -world_half_size, world_half_size)
 	global_position.z = clampf(global_position.z, -world_half_size, world_half_size)
 
+func _enforce_ground_floor() -> void:
+	var ground_height := _get_ground_height()
+	if global_position.y < ground_height - 1.0:
+		global_position.y = ground_height
+		velocity.y = 0.0
+
 func _update_status(delta: float, input_strength: float, is_running: bool) -> void:
 	var oxygen_drain := OXYGEN_IDLE_DRAIN
 	var suit_power_drain := SUIT_POWER_IDLE_DRAIN
@@ -379,9 +386,13 @@ func _update_status(delta: float, input_strength: float, is_running: bool) -> vo
 		temperature_drain = TEMPERATURE_RUN_DRAIN if is_running else TEMPERATURE_WALK_DRAIN
 
 	var suit_drain_multiplier := GameState.get_suit_drain_multiplier()
+	var temp_drain_multiplier := suit_drain_multiplier
+	if GameState.storm_eta_seconds <= 0.0:
+		temp_drain_multiplier *= 15.0
+
 	oxygen = clampf(oxygen - (oxygen_drain * delta), 0.0, GameState.get_max_oxygen())
 	suit_power = clampf(suit_power - (suit_power_drain * suit_drain_multiplier * delta), 0.0, GameState.get_max_suit_power())
-	temperature_resistance = clampf(temperature_resistance - (temperature_drain * suit_drain_multiplier * delta), 0.0, GameState.get_max_temperature_resistance())
+	temperature_resistance = clampf(temperature_resistance - (temperature_drain * temp_drain_multiplier * delta), 0.0, GameState.get_max_temperature_resistance())
 
 	if suit_power <= 0.0:
 		health = clampf(health - (3.8 * delta), 0.0, MAX_HEALTH)

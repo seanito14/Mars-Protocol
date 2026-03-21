@@ -1,671 +1,640 @@
 class_name HeroHUD
 extends Control
 
-## Helmet visor HUD inspired by the supplied sci-fi cockpit reference.
-## The frame and reticle are drawn procedurally, while the telemetry
-## remains bound to the live hero/player state.
+const C_FRAME_DARK := Color(0.1, 0.055, 0.03, 0.985)
+const C_FRAME_MID := Color(0.3, 0.16, 0.08, 0.92)
+const C_FRAME_GLOW := Color(0.58, 0.34, 0.18, 0.32)
+const C_SLOT_GLOW := Color(0.4, 0.86, 1.0, 0.88)
+const C_AMBER := Color(0.96, 0.62, 0.18, 0.82)
 
-const C_FRAME_DARK := Color(0.09, 0.035, 0.02, 0.96)
-const C_FRAME_MID := Color(0.21, 0.09, 0.05, 0.94)
-const C_FRAME_GLOW := Color(0.44, 0.21, 0.12, 0.32)
-const C_GLASS := Color(0.72, 0.86, 0.95, 0.08)
-const C_PANEL := Color(0.06, 0.09, 0.12, 0.18)
-const C_PANEL_EDGE := Color(0.69, 0.82, 0.93, 0.18)
-const C_PANEL_ACCENT := Color(0.78, 0.89, 1.0, 0.34)
-const C_TEXT := Color(0.9, 0.95, 0.99, 0.9)
-const C_TEXT_DIM := Color(0.72, 0.81, 0.9, 0.48)
-const C_TEXT_SOFT := Color(0.62, 0.75, 0.88, 0.28)
-const C_ACCENT := Color(0.72, 0.92, 1.0, 0.95)
-const C_RETICLE := Color(0.72, 0.93, 1.0, 0.42)
-const C_WARNING := Color(1.0, 0.46, 0.22, 0.95)
-const C_OK_BAR := Color(0.84, 0.91, 0.98, 0.84)
+const C_TEXT := Color(0.92, 0.96, 1.0, 0.95)
+const C_TEXT_DIM := Color(0.73, 0.82, 0.9, 0.62)
+const C_PANEL_BG := Color(0.18, 0.2, 0.23, 0.2)
+const C_LINE := Color(0.73, 0.79, 0.86, 0.36)
+const C_RETICLE := Color(0.68, 0.88, 0.98, 0.36)
+const C_GRID_FAINT := Color(0.58, 0.66, 0.74, 0.08)
+const C_COMPASS := Color(0.82, 0.92, 0.98, 0.82)
 
-const TOP_MARGIN := 46.0
-const SIDE_MARGIN := 82.0
-const BOTTOM_MARGIN := 42.0
-const TOP_RAIL_ROTATION := 0.055
+var player: HeroPlayer = null
 
-var player: Node = null
+var top_left_rail: Control
+var tl_05e_label: Label
+var tl_line: ColorRect
+var tl_general_label: Label
 
-var left_rail: Control
-var left_panel: Panel
-var left_code_label: Label
-var left_title_label: Label
-var left_primary_label: Label
-var left_detail_label: Label
-var left_bar_bg: ColorRect
-var left_bar_fill: ColorRect
+var top_right_rail: Control
+var tr_max_label: Label
+var tr_line: ColorRect
+var tr_70ec_label: Label
 
-var right_rail: Control
-var right_panel: Panel
-var right_small_label: Label
-var right_primary_label: Label
-var right_detail_label: Label
-var right_bar_bg: ColorRect
-var right_bar_fill: ColorRect
+var bottom_left_panel: Control
+var bl_stat_line1: Label
+var bl_stat_line2: Label
+var bl_line: ColorRect
+var bl_blur_rect: ColorRect
 
-var ai_panel: Panel
-var ai_indicator: ColorRect
-var ai_channel_label: Label
-var ai_state_label: Label
+var bottom_right_panel: Control
+var br_channel_label: Label
+var br_fiction_label: Label
+var br_id_label: Label
+var br_line: ColorRect
 
-var comms_panel: Panel
-var comms_header_label: Label
-var comms_body_label: Label
+var compass_root: Control
+var compass_heading_label: Label
+var compass_wp_label: Label
 
-var focus_panel: Panel
-var focus_prompt_label: Label
+var interact_prompt_label: Label
 
 var look_touch_area: Control
-var look_hint: Label
-var active_touch_id: int = -1
-var mouse_look_active: bool = false
-
-var pause_button: Button
-var pause_overlay: Control
-var resume_button: Button
-var exit_button: Button
-
 var hud_scale: float = 1.0
-var current_heading_degrees: float = 0.0
-var current_storm_ratio: float = 0.0
-var current_o2_ratio: float = 1.0
-var current_ai_hot: bool = false
-var current_focus_name: String = ""
-var scan_line_phase: float = 0.0
-var pulse_phase: float = 0.0
+var vignette_rect: ColorRect
+var vignette_material: ShaderMaterial
+
+# Pause menu
+var pause_menu: Control = null
+var is_paused: bool = false
+
+# Mission log
+var mission_log_container: VBoxContainer
+var mission_log_entries: Array[Dictionary] = []
+const MISSION_LOG_FADE_DURATION := 6.0
+const MISSION_LOG_MAX_ENTRIES := 5
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_WHEN_PAUSED
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_preset(Control.PRESET_FULL_RECT)
-	player = get_tree().get_first_node_in_group("player")
+	player = get_tree().get_first_node_in_group("player") as HeroPlayer
+	_build_vignette()
 	_build_hud()
+	_build_mission_log()
 	get_viewport().size_changed.connect(_on_window_resized)
 	_on_window_resized()
+	
+	# Connect to mission log events
+	if EventBus:
+		EventBus.mission_log_entry.connect(_on_mission_log_entry)
 
-func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("ui_cancel"):
-		toggle_pause_menu()
-		get_viewport().set_input_as_handled()
+func _process(_delta: float) -> void:
+	if player == null or not is_instance_valid(player):
+		player = get_tree().get_first_node_in_group("player") as HeroPlayer
 
-func _process(delta: float) -> void:
-	scan_line_phase = fposmod(scan_line_phase + (delta * 0.22), 1.0)
-	pulse_phase = fposmod(pulse_phase + (delta * 2.1), TAU)
+	if player != null:
+		var snap: Dictionary = player.get_status_snapshot()
+		var oxygen_max: float = float(snap.get("oxygen_max", 100.0))
+		var oxygen_pct: float = (float(snap.get("oxygen", 0.0)) / maxf(oxygen_max, 0.001)) * 100.0
+		var s_max: float = float(snap.get("suit_power_max", 100.0))
+		var s_pct: float = (float(snap.get("suit_power", 0.0)) / maxf(s_max, 0.001)) * 100.0
+		var temp_max: float = float(snap.get("temperature_resistance_max", 100.0))
+		var temp_pct: float = (float(snap.get("temperature_resistance", 0.0)) / maxf(temp_max, 0.001)) * 100.0
+		var heading_degrees: int = int(round(float(snap.get("heading_degrees", 0.0))))
+		var heading_label: String = str(snap.get("heading_label", "N"))
+		var coords: Vector2 = snap.get("coords", Vector2.ZERO)
+		var clone_iteration: int = GameState.get_clone_iteration() % 1000
+		# Reference-style readout: NN.E0 tracks suit power % (clamped for display).
+		tr_70ec_label.text = "%02d.E0" % clampi(int(round(s_pct)), 0, 99)
+		tl_05e_label.text = "%03d" % clampi(int(round(float(snap.get("elevation_m", 0.0)))), 0, 999)
+		tl_general_label.text = "%s   %s" % [str(snap.get("time_label", "00:00")), heading_label]
+		tr_max_label.text = "MAX\n%02d PSI" % clampi(int(round(float(snap.get("heart_rate", 55.0)) * 0.76)), 10, 99)
+		bl_stat_line1.text = "O2 %02d   PWR %02d   TMP %02d" % [
+			clampi(int(round(oxygen_pct)), 0, 99),
+			clampi(int(round(s_pct)), 0, 99),
+			clampi(int(round(temp_pct)), 0, 99)
+		]
+		bl_stat_line2.text = "GRID %05.1f / %05.1f" % [coords.x, coords.y]
 
-	if player == null:
-		player = get_tree().get_first_node_in_group("player")
-	if player == null or not player.has_method("get_status_snapshot"):
-		queue_redraw()
-		return
+		br_channel_label.text = "Channel"
+		br_fiction_label.text = "%s   %s" % [str(snap.get("storm_eta_label", "Calm")), str(snap.get("scan_target_label", "Valley"))]
+		br_id_label.text = "%03d" % clone_iteration
+		compass_heading_label.text = "%03d° %s" % [posmod(heading_degrees, 360), heading_label]
+		compass_wp_label.text = "SOL 247   CLONE %03d" % clone_iteration
 
-	var snap: Dictionary = player.call("get_status_snapshot")
-	_update_life_support(snap)
-	_update_navigation(snap)
-	_update_ai_status(snap)
-	_update_mission_message(snap)
+		var show_prompt := false
+		var fi: Variant = player.get("focused_interactable")
+		show_prompt = fi != null and is_instance_valid(fi) and not GameState.is_modal_open()
+		if show_prompt:
+			interact_prompt_label.visible = true
+			var fname: String = str(snap.get("focus_name", ""))
+			interact_prompt_label.text = "E  —  INTERACT\n%s" % fname
+		else:
+			interact_prompt_label.visible = false
+	else:
+		interact_prompt_label.visible = false
+
+	if vignette_material != null and player != null:
+		vignette_material.set_shader_parameter("storm_intensity", float(player.get("storm_intensity")))
+		vignette_material.set_shader_parameter("breathing_phase", float(player.get("breathing_phase")))
+
+	_update_mission_log(_delta)
 	queue_redraw()
 
 func _draw() -> void:
 	var vp := get_viewport_rect().size
-	_draw_edge_shading(vp)
-	_draw_visor_frame(vp)
-	_draw_top_module(vp)
-	_draw_compass_badge(vp)
-	_draw_reticle(vp)
-	_draw_focus_marks(vp)
-	_draw_scan_line(vp)
+	var layout := _safe_layout(vp)
+	_draw_visor_frame(vp, layout)
+	_draw_top_left_grid(vp, layout)
+	_draw_top_right_icon(vp)
+	if not _should_hide_reticle():
+		_draw_reticle(vp)
+
+func _should_hide_reticle() -> bool:
+	if GameState.is_modal_open():
+		return true
+	return false
+
+func _safe_layout(vp: Vector2) -> Dictionary:
+	var ar := vp.x / maxf(vp.y, 1.0)
+	var shrink_h := 1.0
+	if ar > 2.2:
+		shrink_h = lerpf(1.0, 0.86, clampf((ar - 2.2) / 1.2, 0.0, 1.0))
+	elif ar < 0.55:
+		shrink_h = lerpf(1.0, 0.9, clampf((0.55 - ar) / 0.35, 0.0, 1.0))
+	var max_w := minf(vp.x, vp.y * 2.35 * shrink_h)
+	var x0 := (vp.x - max_w) * 0.5
+	return {"x0": x0, "w": max_w, "h": vp.y, "shrink_h": shrink_h}
+
+func _build_vignette() -> void:
+	vignette_rect = ColorRect.new()
+	vignette_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vignette_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vignette_material = ShaderMaterial.new()
+	vignette_material.shader = load("res://shaders/hero_visor_overlay.gdshader")
+	vignette_rect.material = vignette_material
+	add_child(vignette_rect)
+	move_child(vignette_rect, 0)
 
 func _build_hud() -> void:
 	_build_top_left()
 	_build_top_right()
-	_build_ai_panel()
-	_build_comms_panel()
-	_build_focus_panel()
+	_build_bottom_left()
+	_build_bottom_right()
+	_build_compass()
+	_build_interact_prompt()
+	compass_root.visible = true
+	bottom_left_panel.visible = true
 	_build_touch_area()
-	_build_pause_overlay()
 
 func _build_top_left() -> void:
-	left_rail = Control.new()
-	left_rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(left_rail)
+	top_left_rail = Control.new()
+	top_left_rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(top_left_rail)
 
-	left_panel = Panel.new()
-	left_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	left_panel.add_theme_stylebox_override("panel", _make_glass_style())
-	left_rail.add_child(left_panel)
+	var panel := Panel.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_theme_stylebox_override("panel", _make_glass_style())
+	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	top_left_rail.add_child(panel)
 
-	left_code_label = _make_label("OSE", 34, C_TEXT)
-	left_panel.add_child(left_code_label)
+	tl_05e_label = _make_label("086", 28, C_TEXT)
+	top_left_rail.add_child(tl_05e_label)
 
-	left_title_label = _make_label("GENERAL 001", 13, C_TEXT_SOFT)
-	left_panel.add_child(left_title_label)
+	tl_line = ColorRect.new()
+	tl_line.color = C_LINE
+	top_left_rail.add_child(tl_line)
 
-	left_primary_label = _make_label("O2 100%", 28, C_TEXT)
-	left_panel.add_child(left_primary_label)
-
-	left_bar_bg = ColorRect.new()
-	left_bar_bg.color = Color(0.7, 0.82, 0.93, 0.09)
-	left_bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	left_panel.add_child(left_bar_bg)
-
-	left_bar_fill = ColorRect.new()
-	left_bar_fill.color = C_OK_BAR
-	left_bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	left_panel.add_child(left_bar_fill)
-
-	left_detail_label = _make_label("GRID +0.0 / +0.0", 14, C_TEXT_DIM)
-	left_panel.add_child(left_detail_label)
+	tl_general_label = _make_label("06:14   N", 16, C_TEXT_DIM)
+	top_left_rail.add_child(tl_general_label)
 
 func _build_top_right() -> void:
-	right_rail = Control.new()
-	right_rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(right_rail)
+	top_right_rail = Control.new()
+	top_right_rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(top_right_rail)
 
-	right_panel = Panel.new()
-	right_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	right_panel.add_theme_stylebox_override("panel", _make_glass_style())
-	right_rail.add_child(right_panel)
+	var panel := Panel.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_theme_stylebox_override("panel", _make_glass_style())
+	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	top_right_rail.add_child(panel)
 
-	right_small_label = _make_label("070.EC", 13, C_TEXT_SOFT)
-	right_small_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	right_panel.add_child(right_small_label)
+	tr_max_label = _make_label("MAX\n55 PSI", 14, C_TEXT)
+	tr_max_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	top_right_rail.add_child(tr_max_label)
 
-	right_primary_label = _make_label("WPT 055M", 28, C_TEXT)
-	right_primary_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	right_panel.add_child(right_primary_label)
+	tr_line = ColorRect.new()
+	tr_line.color = C_LINE
+	top_right_rail.add_child(tr_line)
 
-	right_bar_bg = ColorRect.new()
-	right_bar_bg.color = Color(0.7, 0.82, 0.93, 0.09)
-	right_bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	right_panel.add_child(right_bar_bg)
+	tr_70ec_label = _make_label("78.E0", 18, C_TEXT)
+	tr_70ec_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	top_right_rail.add_child(tr_70ec_label)
 
-	right_bar_fill = ColorRect.new()
-	right_bar_fill.color = C_OK_BAR
-	right_bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	right_panel.add_child(right_bar_fill)
+func _build_bottom_left() -> void:
+	bottom_left_panel = Control.new()
+	bottom_left_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bottom_left_panel)
 
-	right_detail_label = _make_label("STORM 0h 00m", 14, C_TEXT_DIM)
-	right_panel.add_child(right_detail_label)
+	bl_blur_rect = ColorRect.new()
+	bl_blur_rect.color = Color(0.1, 0.2, 0.3, 0.15)
+	bottom_left_panel.add_child(bl_blur_rect)
 
-func _build_ai_panel() -> void:
-	ai_panel = Panel.new()
-	ai_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ai_panel.add_theme_stylebox_override("panel", _make_glass_style(10))
-	add_child(ai_panel)
+	bl_stat_line1 = _make_label("O2 99   PWR 78   TMP 99", 18, C_TEXT)
+	bottom_left_panel.add_child(bl_stat_line1)
 
-	ai_indicator = ColorRect.new()
-	ai_indicator.color = C_ACCENT
-	ai_indicator.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ai_panel.add_child(ai_indicator)
+	bl_stat_line2 = _make_label("GRID 000.0 / 000.0", 15, C_TEXT_DIM)
+	bottom_left_panel.add_child(bl_stat_line2)
 
-	ai_channel_label = _make_label("LINK // CH 01", 12, C_TEXT_SOFT)
-	ai_panel.add_child(ai_channel_label)
+	bl_line = ColorRect.new()
+	bl_line.color = C_LINE
+	bottom_left_panel.add_child(bl_line)
 
-	ai_state_label = _make_label("MARVIN STANDBY", 18, C_TEXT)
-	ai_panel.add_child(ai_state_label)
+func _build_bottom_right() -> void:
+	bottom_right_panel = Control.new()
+	bottom_right_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bottom_right_panel)
 
-func _build_comms_panel() -> void:
-	comms_panel = Panel.new()
-	comms_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	comms_panel.add_theme_stylebox_override("panel", _make_glass_style(14))
-	add_child(comms_panel)
+	br_channel_label = _make_label("Channel", 14, C_TEXT_DIM)
+	br_channel_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	bottom_right_panel.add_child(br_channel_label)
 
-	comms_header_label = _make_label("CHANNEL // 00:00:00", 12, C_TEXT_SOFT)
-	comms_panel.add_child(comms_header_label)
+	br_fiction_label = _make_label("CALM   VALLEY", 16, C_TEXT)
+	br_fiction_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	bottom_right_panel.add_child(br_fiction_label)
 
-	comms_body_label = _make_label("Marvin online. Move toward the wreckage and request a scan.", 16, C_TEXT_DIM)
-	comms_body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	comms_panel.add_child(comms_body_label)
+	br_id_label = _make_label("014", 15, C_TEXT_DIM)
+	br_id_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	bottom_right_panel.add_child(br_id_label)
 
-func _build_focus_panel() -> void:
-	focus_panel = Panel.new()
-	focus_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	focus_panel.add_theme_stylebox_override("panel", _make_glass_style(12))
-	add_child(focus_panel)
+	br_line = ColorRect.new()
+	br_line.color = Color(0.55, 0.62, 0.68, 0.2)
+	bottom_right_panel.add_child(br_line)
 
-	focus_prompt_label = _make_label("Walk the crater, inspect the wreckage, and talk to Marvin.", 13, C_TEXT_DIM)
-	focus_prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	focus_prompt_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	focus_panel.add_child(focus_prompt_label)
+func _build_compass() -> void:
+	compass_root = Control.new()
+	compass_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(compass_root)
+
+	compass_heading_label = _make_label("000° N", 17, C_COMPASS)
+	compass_heading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	compass_root.add_child(compass_heading_label)
+
+	compass_wp_label = _make_label("SOL 247   CLONE 014", 14, C_TEXT_DIM)
+	compass_wp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	compass_root.add_child(compass_wp_label)
+
+func _build_interact_prompt() -> void:
+	interact_prompt_label = Label.new()
+	interact_prompt_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	interact_prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	interact_prompt_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	interact_prompt_label.add_theme_font_size_override("font_size", 14)
+	interact_prompt_label.add_theme_color_override("font_color", C_TEXT)
+	interact_prompt_label.add_theme_color_override("font_outline_color", Color(0.02, 0.02, 0.04, 0.95))
+	interact_prompt_label.add_theme_constant_override("outline_size", 5)
+	interact_prompt_label.text = "E  —  INTERACT"
+	interact_prompt_label.visible = false
+	interact_prompt_label.z_index = 8
+	add_child(interact_prompt_label)
 
 func _build_touch_area() -> void:
 	look_touch_area = Control.new()
-	look_touch_area.name = "LookTouchArea"
 	look_touch_area.set_anchors_preset(Control.PRESET_FULL_RECT)
-	look_touch_area.anchor_left = 0.48
-	look_touch_area.offset_top = 72.0
-	look_touch_area.offset_right = -18.0
-	look_touch_area.offset_bottom = -18.0
-	look_touch_area.mouse_filter = Control.MOUSE_FILTER_STOP
+	look_touch_area.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(look_touch_area)
-	look_touch_area.gui_input.connect(_on_look_touch_input)
-
-	look_hint = Label.new()
-	look_hint.text = "DRAG RIGHT SIDE TO LOOK"
-	look_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	look_hint.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	look_hint.offset_left = -280.0
-	look_hint.offset_top = -60.0
-	look_hint.offset_right = -12.0
-	look_hint.offset_bottom = -18.0
-	look_hint.modulate = Color(1.0, 1.0, 1.0, 0.22)
-	look_hint.add_theme_font_size_override("font_size", 12)
-	look_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	look_touch_area.add_child(look_hint)
-
-func _build_pause_overlay() -> void:
-	pause_button = Button.new()
-	pause_button.name = "PauseButton"
-	pause_button.text = "II"
-	pause_button.flat = true
-	pause_button.add_theme_font_size_override("font_size", 18)
-	pause_button.add_theme_color_override("font_color", C_TEXT_SOFT)
-	pause_button.add_theme_color_override("font_hover_color", C_ACCENT)
-	add_child(pause_button)
-	pause_button.pressed.connect(_on_pause_pressed)
-
-	pause_overlay = Control.new()
-	pause_overlay.name = "PauseOverlay"
-	pause_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	pause_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	pause_overlay.visible = false
-	add_child(pause_overlay)
-
-	var dimmer := ColorRect.new()
-	dimmer.color = Color(0.01, 0.015, 0.02, 0.72)
-	dimmer.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dimmer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pause_overlay.add_child(dimmer)
-
-	var panel := PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.offset_left = -200.0
-	panel.offset_top = -126.0
-	panel.offset_right = 200.0
-	panel.offset_bottom = 126.0
-	panel.add_theme_stylebox_override("panel", _make_glass_style(18, Color(0.08, 0.11, 0.16, 0.92)))
-	pause_overlay.add_child(panel)
-
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 16)
-	panel.add_child(vbox)
-
-	var title := _make_label("PAUSED", 30, C_ACCENT)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vbox.add_child(title)
-
-	var subtitle := _make_label("Resume the mission or exit.", 14, C_TEXT_DIM)
-	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vbox.add_child(subtitle)
-
-	resume_button = Button.new()
-	resume_button.text = "RESUME"
-	vbox.add_child(resume_button)
-	resume_button.pressed.connect(_on_resume_pressed)
-
-	exit_button = Button.new()
-	exit_button.text = "EXIT GAME"
-	vbox.add_child(exit_button)
-	exit_button.pressed.connect(_on_exit_pressed)
-
-func _update_life_support(snap: Dictionary) -> void:
-	var o2 := float(snap.get("oxygen", 100.0))
-	var o2_max := float(snap.get("oxygen_max", 100.0))
-	current_o2_ratio = clampf(o2 / maxf(o2_max, 1.0), 0.0, 1.0)
-
-	left_primary_label.text = "O2 %03d%%" % int(round(o2))
-	var coords: Vector2 = snap.get("coords", Vector2.ZERO)
-	left_detail_label.text = "GRID %+.1f  /  %+.1f" % [coords.x, coords.y]
-	left_bar_fill.size.x = left_bar_bg.size.x * current_o2_ratio
-	if current_o2_ratio < 0.28:
-		left_bar_fill.color = C_WARNING
-		left_primary_label.add_theme_color_override("font_color", C_WARNING.lerp(C_TEXT, 0.35 + (0.35 * (sin(pulse_phase) + 1.0))))
-	else:
-		left_bar_fill.color = C_OK_BAR
-		left_primary_label.add_theme_color_override("font_color", C_TEXT)
-
-func _update_navigation(snap: Dictionary) -> void:
-	var heading_label: String = str(snap.get("heading_label", "N"))
-	current_heading_degrees = float(snap.get("heading_degrees", 0.0))
-	right_small_label.text = "%03d.%s" % [int(round(current_heading_degrees)), heading_label]
-
-	var waypoint_distance := float(snap.get("waypoint_distance", -1.0))
-	var waypoint_name := str(snap.get("active_waypoint", ""))
-	if waypoint_distance >= 0.0:
-		right_primary_label.text = "WPT %03dM" % int(round(waypoint_distance))
-	else:
-		right_primary_label.text = waypoint_name if not waypoint_name.is_empty() else "WPT ---"
-
-	var storm_eta := str(snap.get("storm_eta_label", "0h 00m"))
-	right_detail_label.text = "STORM %s" % storm_eta
-	current_storm_ratio = clampf(float(snap.get("storm_intensity", 0.0)), 0.03, 1.0)
-	right_bar_fill.size.x = right_bar_bg.size.x * current_storm_ratio
-	right_bar_fill.color = C_WARNING if current_storm_ratio > 0.62 else C_OK_BAR
-
-func _update_ai_status(snap: Dictionary) -> void:
-	var marvin_state := str(snap.get("marvin_conversation_state", "STANDBY"))
-	var sudo_state := ""
-	if player != null:
-		sudo_state = str(player.get("sudo_ai_state"))
-
-	if not sudo_state.is_empty() and sudo_state != "OFFLINE":
-		ai_state_label.text = sudo_state
-		ai_indicator.color = C_ACCENT
-		current_ai_hot = true
-	else:
-		ai_state_label.text = "MARVIN %s" % marvin_state
-		ai_indicator.color = Color(0.82, 0.9, 1.0, 0.82)
-		current_ai_hot = marvin_state.contains("SCAN") or marvin_state.contains("VOICE")
-
-	ai_indicator.modulate.a = 0.54 + (0.38 * ((sin(pulse_phase * 0.7) + 1.0) * 0.5))
-
-func _update_mission_message(snap: Dictionary) -> void:
-	var time_label := str(snap.get("time_label", "00:00:00"))
-	comms_header_label.text = "CHANNEL // %s" % time_label
-
-	var msg := str(snap.get("marvin_message", ""))
-	current_focus_name = str(snap.get("focus_name", "Open Terrain"))
-	if msg.is_empty():
-		comms_body_label.text = current_focus_name
-	else:
-		comms_body_label.text = msg
-
-	var prompt := str(snap.get("focus_prompt", ""))
-	if prompt.is_empty():
-		focus_prompt_label.text = current_focus_name
-	else:
-		focus_prompt_label.text = prompt
 
 func _on_window_resized() -> void:
 	var vp := get_viewport().get_visible_rect().size
-	hud_scale = clampf(vp.x / 2048.0, 0.72, 1.0)
-	var small_mode := vp.x < 1400.0
-	var rail_width := minf(540.0, vp.x * (0.34 if not small_mode else 0.39))
-	var rail_height := 88.0 * hud_scale
-	var bar_width := rail_width - (190.0 * hud_scale)
-	var bar_height := maxf(3.0, 4.0 * hud_scale)
+	hud_scale = clampf(sqrt(vp.x * vp.y) / sqrt(1920.0 * 1080.0), 0.55, 1.25)
 
-	left_rail.position = Vector2(SIDE_MARGIN * hud_scale, TOP_MARGIN * hud_scale)
-	left_rail.rotation = -TOP_RAIL_ROTATION
-	left_rail.size = Vector2(rail_width, rail_height)
-	left_rail.pivot_offset = Vector2.ZERO
-	left_panel.size = left_rail.size
+	var rail_w := 376.0 * hud_scale
+	var rail_h := 36.0 * hud_scale
 
-	left_code_label.position = Vector2(12.0 * hud_scale, -2.0 * hud_scale)
-	left_title_label.position = Vector2(118.0 * hud_scale, 8.0 * hud_scale)
-	left_primary_label.position = Vector2(18.0 * hud_scale, 26.0 * hud_scale)
-	left_bar_bg.position = Vector2(146.0 * hud_scale, 34.0 * hud_scale)
-	left_bar_bg.size = Vector2(bar_width, bar_height)
-	left_bar_fill.position = left_bar_bg.position
-	left_detail_label.position = Vector2(18.0 * hud_scale, 56.0 * hud_scale)
-	left_detail_label.size = Vector2(rail_width - (36.0 * hud_scale), 18.0 * hud_scale)
+	# Top Left
+	top_left_rail.size = Vector2(rail_w, rail_h)
+	top_left_rail.position = Vector2(vp.x * 0.075, vp.y * 0.072)
+	top_left_rail.rotation = deg_to_rad(4.4)
 
-	right_rail.position = Vector2(vp.x - (SIDE_MARGIN * hud_scale) - rail_width, TOP_MARGIN * hud_scale)
-	right_rail.rotation = TOP_RAIL_ROTATION
-	right_rail.size = Vector2(rail_width, rail_height)
-	right_rail.pivot_offset = Vector2(rail_width, 0.0)
-	right_panel.size = right_rail.size
+	tl_05e_label.position = Vector2(10 * hud_scale, -1 * hud_scale)
+	tl_line.position = Vector2(72 * hud_scale, 18 * hud_scale)
+	tl_line.size = Vector2(188 * hud_scale, 1.6)
+	tl_general_label.position = Vector2(164 * hud_scale, 3 * hud_scale)
 
-	right_small_label.position = Vector2(rail_width - (150.0 * hud_scale), 8.0 * hud_scale)
-	right_small_label.size = Vector2(132.0 * hud_scale, 16.0 * hud_scale)
-	right_primary_label.position = Vector2(18.0 * hud_scale, 26.0 * hud_scale)
-	right_primary_label.size = Vector2(rail_width - (36.0 * hud_scale), 28.0 * hud_scale)
-	right_bar_bg.position = Vector2(120.0 * hud_scale, 34.0 * hud_scale)
-	right_bar_bg.size = Vector2(bar_width + (26.0 * hud_scale), bar_height)
-	right_bar_fill.position = right_bar_bg.position
-	right_detail_label.position = Vector2(18.0 * hud_scale, 56.0 * hud_scale)
-	right_detail_label.size = Vector2(rail_width - (36.0 * hud_scale), 18.0 * hud_scale)
+	# Top Right
+	top_right_rail.size = Vector2(rail_w, rail_h)
+	top_right_rail.position = Vector2(vp.x * 0.925 - rail_w, vp.y * 0.075)
+	top_right_rail.rotation = deg_to_rad(-4.6)
 
-	ai_panel.position = Vector2((SIDE_MARGIN - 6.0) * hud_scale, vp.y - (BOTTOM_MARGIN * hud_scale) - (42.0 * hud_scale))
-	ai_panel.size = Vector2(maxf(220.0 * hud_scale, vp.x * 0.17), 38.0 * hud_scale)
-	ai_indicator.position = Vector2(10.0 * hud_scale, 14.0 * hud_scale)
-	ai_indicator.size = Vector2(10.0 * hud_scale, 10.0 * hud_scale)
-	ai_channel_label.position = Vector2(28.0 * hud_scale, 3.0 * hud_scale)
-	ai_channel_label.size = Vector2(ai_panel.size.x - (38.0 * hud_scale), 14.0 * hud_scale)
-	ai_state_label.position = Vector2(28.0 * hud_scale, 16.0 * hud_scale)
-	ai_state_label.size = Vector2(ai_panel.size.x - (36.0 * hud_scale), 18.0 * hud_scale)
+	tr_max_label.position = Vector2(10 * hud_scale, -5 * hud_scale)
+	tr_line.position = Vector2(78 * hud_scale, 18 * hud_scale)
+	tr_line.size = Vector2(214 * hud_scale, 1.6)
+	tr_70ec_label.position = Vector2(rail_w - 74 * hud_scale, 5 * hud_scale)
 
-	var comms_width := minf(520.0, vp.x * (0.34 if not small_mode else 0.44))
-	comms_panel.size = Vector2(comms_width, 86.0 * hud_scale)
-	comms_panel.position = Vector2(vp.x - comms_width - (SIDE_MARGIN * hud_scale), vp.y - (BOTTOM_MARGIN * hud_scale) - comms_panel.size.y)
-	comms_header_label.position = Vector2(14.0 * hud_scale, 8.0 * hud_scale)
-	comms_header_label.size = Vector2(comms_width - (28.0 * hud_scale), 14.0 * hud_scale)
-	comms_body_label.position = Vector2(14.0 * hud_scale, 28.0 * hud_scale)
-	comms_body_label.size = Vector2(comms_width - (28.0 * hud_scale), 44.0 * hud_scale)
+	# Bottom Left — height for two lines
+	var bl_h := 64.0 * hud_scale
+	var bl_w := minf(340.0 * hud_scale, vp.x * 0.36)
+	bottom_left_panel.size = Vector2(bl_w, bl_h)
+	bottom_left_panel.position = Vector2(maxf(14.0, vp.x * 0.016), vp.y * 0.89 - bl_h * 0.5)
 
-	var focus_width := minf(420.0, vp.x * 0.28)
-	focus_panel.size = Vector2(focus_width, 42.0 * hud_scale)
-	focus_panel.position = Vector2((vp.x - focus_width) * 0.5, vp.y - (BOTTOM_MARGIN * hud_scale) - focus_panel.size.y)
-	focus_prompt_label.position = Vector2(12.0 * hud_scale, 8.0 * hud_scale)
-	focus_prompt_label.size = Vector2(focus_width - (24.0 * hud_scale), 24.0 * hud_scale)
+	bl_stat_line1.position = Vector2(8 * hud_scale, 6 * hud_scale)
+	bl_stat_line2.position = Vector2(8 * hud_scale, 26 * hud_scale)
+	bl_blur_rect.position = Vector2(8 * hud_scale, 46 * hud_scale)
+	bl_blur_rect.size = Vector2(bl_w - 16.0 * hud_scale, 8.0 * hud_scale)
+	bl_line.position = Vector2(8 * hud_scale, bl_h - 9.0 * hud_scale)
+	bl_line.size = Vector2(bl_w - 16.0 * hud_scale, 1.5)
 
-	pause_button.position = Vector2(vp.x - (58.0 * hud_scale), (TOP_MARGIN + 86.0) * hud_scale)
-	pause_button.size = Vector2(32.0 * hud_scale, 28.0 * hud_scale)
+	# Bottom Right — Channel block (reference layout)
+	var br_w := minf(420.0 * hud_scale, vp.x * 0.42)
+	var br_h := 70.0 * hud_scale
+	bottom_right_panel.size = Vector2(br_w, br_h)
+	var br_x := vp.x * 0.975 - br_w - 6.0
+	br_x = clampf(br_x, 8.0, vp.x - br_w - 8.0)
+	bottom_right_panel.position = Vector2(br_x, vp.y * 0.89 - br_h * 0.5)
 
-	if small_mode:
-		look_hint.text = "DRAG TO LOOK"
-	else:
-		look_hint.text = "DRAG RIGHT SIDE TO LOOK"
+	br_channel_label.position = Vector2(8.0 * hud_scale, 4.0 * hud_scale)
+	br_channel_label.size = Vector2(br_w - 16.0 * hud_scale, 16.0 * hud_scale)
+	br_fiction_label.position = Vector2(8.0 * hud_scale, 20.0 * hud_scale)
+	br_fiction_label.size = Vector2(br_w - 16.0 * hud_scale, 24.0 * hud_scale)
+	br_id_label.position = Vector2(br_w - 52.0 * hud_scale, 41.0 * hud_scale)
+	br_id_label.size = Vector2(44.0 * hud_scale, 20.0 * hud_scale)
+	br_line.position = Vector2(8.0 * hud_scale, br_h - 8.0 * hud_scale)
+	br_line.size = Vector2(br_w - 16.0 * hud_scale, 1.5)
 
-	_apply_font_scale(small_mode)
-	queue_redraw()
+	compass_root.position = Vector2((vp.x * 0.5) - (160.0 * hud_scale), vp.y * 0.058)
+	compass_root.size = Vector2(320.0 * hud_scale, 34.0 * hud_scale)
+	compass_heading_label.position = Vector2(0.0, 0.0)
+	compass_heading_label.size = Vector2(compass_root.size.x, 18.0 * hud_scale)
+	compass_wp_label.position = Vector2(0.0, 14.0 * hud_scale)
+	compass_wp_label.size = Vector2(compass_root.size.x, 16.0 * hud_scale)
 
-func _apply_font_scale(small_mode: bool) -> void:
-	var label_scale := hud_scale * (0.92 if small_mode else 1.0)
-	_set_font_size(left_code_label, 30 * label_scale)
-	_set_font_size(left_title_label, 12 * label_scale)
-	_set_font_size(left_primary_label, 25 * label_scale)
-	_set_font_size(left_detail_label, 13 * label_scale)
-	_set_font_size(right_small_label, 12 * label_scale)
-	_set_font_size(right_primary_label, 25 * label_scale)
-	_set_font_size(right_detail_label, 13 * label_scale)
-	_set_font_size(ai_channel_label, 11 * label_scale)
-	_set_font_size(ai_state_label, 16 * label_scale)
-	_set_font_size(comms_header_label, 11 * label_scale)
-	_set_font_size(comms_body_label, 15 * label_scale)
-	_set_font_size(focus_prompt_label, 12 * label_scale)
-	look_hint.add_theme_font_size_override("font_size", maxi(int(round(12 * label_scale)), 10))
+	# Interaction prompt — subtle, below reticle
+	var ip_w := minf(480.0 * hud_scale, vp.x * 0.65)
+	interact_prompt_label.position = Vector2((vp.x - ip_w) * 0.5, vp.y * 0.5 + 52.0 * hud_scale)
+	interact_prompt_label.size = Vector2(ip_w, 64.0 * hud_scale)
 
-func _draw_edge_shading(vp: Vector2) -> void:
-	draw_rect(Rect2(Vector2.ZERO, Vector2(vp.x, vp.y * 0.08)), Color(0.0, 0.0, 0.0, 0.08), true)
-	draw_rect(Rect2(Vector2.ZERO, Vector2(vp.x * 0.04, vp.y)), Color(0.0, 0.0, 0.0, 0.05), true)
-	draw_rect(Rect2(Vector2(vp.x * 0.96, 0.0), Vector2(vp.x * 0.04, vp.y)), Color(0.0, 0.0, 0.0, 0.05), true)
-	draw_rect(Rect2(Vector2(0.0, vp.y * 0.92), Vector2(vp.x, vp.y * 0.08)), Color(0.0, 0.0, 0.0, 0.035), true)
+	_apply_font_scale()
 
-func _draw_visor_frame(vp: Vector2) -> void:
-	var left_frame := PackedVector2Array([
+func _apply_font_scale() -> void:
+	_set_font_size(tl_05e_label, 24 * hud_scale)
+	_set_font_size(tl_general_label, 14 * hud_scale)
+	_set_font_size(tr_max_label, 14 * hud_scale)
+	_set_font_size(tr_70ec_label, 19 * hud_scale)
+	_set_font_size(bl_stat_line1, 14 * hud_scale)
+	_set_font_size(bl_stat_line2, 12 * hud_scale)
+	_set_font_size(br_channel_label, 13 * hud_scale)
+	_set_font_size(br_fiction_label, 14 * hud_scale)
+	_set_font_size(br_id_label, 15 * hud_scale)
+	_set_font_size(compass_heading_label, 15 * hud_scale)
+	_set_font_size(compass_wp_label, 12 * hud_scale)
+	_set_font_size(interact_prompt_label, 14 * hud_scale)
+
+func _draw_visor_frame(vp: Vector2, layout: Dictionary) -> void:
+	var x0: float = layout.x0
+	var w: float = layout.w
+	var h: float = layout.h
+
+	var top_border := PackedVector2Array([
 		Vector2(0.0, 0.0),
-		Vector2(vp.x * 0.185, 0.0),
-		Vector2(vp.x * 0.168, vp.y * 0.036),
-		Vector2(vp.x * 0.132, vp.y * 0.09),
-		Vector2(vp.x * 0.088, vp.y * 0.2),
-		Vector2(vp.x * 0.05, vp.y * 0.37),
-		Vector2(vp.x * 0.022, vp.y * 0.56),
-		Vector2(0.0, vp.y * 0.69),
-	])
-	var right_frame := PackedVector2Array([
 		Vector2(vp.x, 0.0),
-		Vector2(vp.x * 0.815, 0.0),
-		Vector2(vp.x * 0.832, vp.y * 0.036),
-		Vector2(vp.x * 0.868, vp.y * 0.09),
-		Vector2(vp.x * 0.912, vp.y * 0.2),
-		Vector2(vp.x * 0.95, vp.y * 0.37),
-		Vector2(vp.x * 0.978, vp.y * 0.56),
-		Vector2(vp.x, vp.y * 0.69),
-	])
-	var left_lower := PackedVector2Array([
-		Vector2(0.0, vp.y),
-		Vector2(0.0, vp.y - (vp.y * 0.19)),
-		Vector2(vp.x * 0.008, vp.y - (vp.y * 0.19)),
-		Vector2(vp.x * 0.008, vp.y - (vp.y * 0.12)),
-		Vector2(vp.x * 0.03, vp.y - (vp.y * 0.12)),
-		Vector2(vp.x * 0.058, vp.y),
-	])
-	var right_lower := PackedVector2Array([
-		Vector2(vp.x, vp.y),
-		Vector2(vp.x, vp.y - (vp.y * 0.19)),
-		Vector2(vp.x * 0.992, vp.y - (vp.y * 0.19)),
-		Vector2(vp.x * 0.992, vp.y - (vp.y * 0.12)),
-		Vector2(vp.x * 0.97, vp.y - (vp.y * 0.12)),
-		Vector2(vp.x * 0.942, vp.y),
+		Vector2(vp.x, h * 0.082),
+		Vector2(x0 + (w * 0.72), h * 0.082),
+		Vector2(x0 + (w * 0.655), h * 0.126),
+		Vector2(x0 + (w * 0.345), h * 0.126),
+		Vector2(x0 + (w * 0.28), h * 0.082),
+		Vector2(0.0, h * 0.082)
 	])
 
-	_draw_frame_piece(left_frame)
-	_draw_frame_piece(right_frame)
-	_draw_frame_piece(left_lower)
-	_draw_frame_piece(right_lower)
-
-func _draw_frame_piece(points: PackedVector2Array) -> void:
-	draw_colored_polygon(points, C_FRAME_DARK)
-	draw_polyline(points, C_FRAME_GLOW, 3.0, true)
-	var inset := PackedVector2Array()
-	for point in points:
-		inset.append(point.lerp(get_viewport_rect().size * 0.5, 0.045))
-	draw_colored_polygon(inset, Color(C_FRAME_MID.r, C_FRAME_MID.g, C_FRAME_MID.b, 0.18))
-
-func _draw_top_module(vp: Vector2) -> void:
-	var top_module := PackedVector2Array([
-		Vector2(vp.x * 0.37, 0.0),
-		Vector2(vp.x * 0.63, 0.0),
-		Vector2(vp.x * 0.612, vp.y * 0.034),
-		Vector2(vp.x * 0.556, vp.y * 0.047),
-		Vector2(vp.x * 0.544, vp.y * 0.075),
-		Vector2(vp.x * 0.456, vp.y * 0.075),
-		Vector2(vp.x * 0.444, vp.y * 0.047),
-		Vector2(vp.x * 0.388, vp.y * 0.034),
+	var left_border := PackedVector2Array([
+		Vector2(0.0, 0.0),
+		Vector2(x0 + (w * 0.14), h * 0.02),
+		Vector2(x0 + (w * 0.11), h * 0.18),
+		Vector2(x0 + (w * 0.078), h * 0.46),
+		Vector2(x0 + (w * 0.084), h * 0.72),
+		Vector2(x0 + (w * 0.19), h),
+		Vector2(0.0, h)
 	])
-	draw_colored_polygon(top_module, C_FRAME_DARK)
-	draw_polyline(top_module, C_FRAME_GLOW, 3.0, true)
 
-	var light_rect := Rect2(vp.x * 0.457, vp.y * 0.012, vp.x * 0.086, vp.y * 0.02)
-	draw_rect(light_rect, Color(0.62, 0.89, 1.0, 0.75), true)
-	draw_rect(light_rect.grow(4.0), Color(0.62, 0.89, 1.0, 0.08), true)
+	var right_border := PackedVector2Array([
+		Vector2(vp.x, 0.0),
+		Vector2(x0 + (w * 0.86), h * 0.02),
+		Vector2(x0 + (w * 0.89), h * 0.18),
+		Vector2(x0 + (w * 0.922), h * 0.46),
+		Vector2(x0 + (w * 0.916), h * 0.72),
+		Vector2(x0 + (w * 0.81), h),
+		Vector2(vp.x, h)
+	])
 
-func _draw_compass_badge(vp: Vector2) -> void:
-	var center := Vector2(vp.x - (74.0 * hud_scale), 56.0 * hud_scale)
-	var radius := 20.0 * hud_scale
-	draw_arc(center, radius, 0.0, TAU, 48, C_PANEL_ACCENT, 2.0, true)
-	draw_arc(center, radius - (6.0 * hud_scale), 0.0, TAU, 48, Color(0.75, 0.88, 1.0, 0.18), 1.0, true)
-	var needle_angle := deg_to_rad(current_heading_degrees - 90.0)
-	var needle_tip := center + Vector2(cos(needle_angle), sin(needle_angle)) * (radius - (4.0 * hud_scale))
-	var needle_tail := center - Vector2(cos(needle_angle), sin(needle_angle)) * (radius * 0.35)
-	draw_line(needle_tail, needle_tip, C_ACCENT, 2.0)
-	draw_circle(center, 2.5 * hud_scale, C_ACCENT)
+	var bottom_console := PackedVector2Array([
+		Vector2(x0 + (w * 0.36), h),
+		Vector2(x0 + (w * 0.405), h * 0.852),
+		Vector2(x0 + (w * 0.595), h * 0.852),
+		Vector2(x0 + (w * 0.64), h),
+	])
+
+	var lower_left_pod := PackedVector2Array([
+		Vector2(0.0, h * 0.8),
+		Vector2(x0 + (w * 0.012), h * 0.79),
+		Vector2(x0 + (w * 0.05), h),
+		Vector2(0.0, h)
+	])
+
+	var lower_right_pod := PackedVector2Array([
+		Vector2(vp.x, h * 0.8),
+		Vector2(x0 + (w * 0.988), h * 0.79),
+		Vector2(x0 + (w * 0.95), h),
+		Vector2(vp.x, h)
+	])
+
+	draw_colored_polygon(top_border, C_FRAME_DARK)
+	draw_colored_polygon(left_border, C_FRAME_DARK)
+	draw_colored_polygon(right_border, C_FRAME_DARK)
+	draw_colored_polygon(bottom_console, C_FRAME_DARK)
+	draw_colored_polygon(lower_left_pod, C_FRAME_DARK)
+	draw_colored_polygon(lower_right_pod, C_FRAME_DARK)
+
+	draw_polyline(top_border, C_FRAME_GLOW, 4.0, true)
+	draw_polyline(left_border, C_FRAME_GLOW, 4.0, true)
+	draw_polyline(right_border, C_FRAME_GLOW, 4.0, true)
+	draw_polyline(bottom_console, C_FRAME_GLOW, 4.0, true)
+	draw_polyline(lower_left_pod, C_FRAME_GLOW, 3.0, true)
+	draw_polyline(lower_right_pod, C_FRAME_GLOW, 3.0, true)
+
+	var slot_rect := Rect2(x0 + (w * 0.455), h * 0.032, w * 0.09, h * 0.018)
+	draw_rect(slot_rect, C_SLOT_GLOW)
+	draw_rect(Rect2(x0 + (w * 0.42), h * 0.038, w * 0.016, h * 0.008), C_AMBER)
+	draw_rect(Rect2(x0 + (w * 0.564), h * 0.038, w * 0.016, h * 0.008), C_AMBER)
+
+	var center_strip_y := h * 0.064
+	draw_line(Vector2(x0 + (w * 0.33), center_strip_y), Vector2(x0 + (w * 0.44), center_strip_y), Color(C_LINE.r, C_LINE.g, C_LINE.b, 0.26), 1.2)
+	draw_line(Vector2(x0 + (w * 0.56), center_strip_y), Vector2(x0 + (w * 0.67), center_strip_y), Color(C_LINE.r, C_LINE.g, C_LINE.b, 0.26), 1.2)
+
+	var screen_rect := Rect2(x0 + (w * 0.424), h * 0.878, w * 0.152, h * 0.094)
+	draw_rect(screen_rect, Color(0.02, 0.02, 0.02, 0.9))
+	draw_rect(screen_rect, C_FRAME_MID, false, 2.0)
+
+	var scr_right := screen_rect.position.x + screen_rect.size.x
+	var cy_k := screen_rect.position.y + screen_rect.size.y * 0.5
+	var r_knob := 5.5 * hud_scale
+	var gap_k := 9.0 * hud_scale
+	var k1x := scr_right + gap_k + r_knob
+	var k2x := k1x + gap_k + r_knob * 2.0
+	var knob_fill := Color(0.07, 0.07, 0.08, 0.92)
+	draw_circle(Vector2(k1x, cy_k), r_knob, knob_fill)
+	draw_arc(Vector2(k1x, cy_k), r_knob, 0, TAU, 28, C_FRAME_MID, 1.2, true)
+	draw_circle(Vector2(k2x, cy_k), r_knob, knob_fill)
+	draw_arc(Vector2(k2x, cy_k), r_knob, 0, TAU, 28, C_FRAME_MID, 1.2, true)
+
+func _draw_top_left_grid(vp: Vector2, _layout: Dictionary) -> void:
+	var gx := vp.x * 0.08 + 68.0 * hud_scale
+	var gy := vp.y * 0.073 + 4.0 * hud_scale
+	var gw := 176.0 * hud_scale
+	var gh := 18.0 * hud_scale
+	var cols := 8
+	var rows := 4
+	for i in range(cols + 1):
+		var px := gx + (gw / float(cols)) * float(i)
+		draw_line(Vector2(px, gy), Vector2(px, gy + gh), C_GRID_FAINT, 0.8)
+	for j in range(rows + 1):
+		var py := gy + (gh / float(rows)) * float(j)
+		draw_line(Vector2(gx, py), Vector2(gx + gw, py), C_GRID_FAINT, 0.8)
+
+func _draw_top_right_icon(vp: Vector2) -> void:
+	var cx := vp.x * 0.92 - 20.0 * hud_scale
+	var cy := vp.y * 0.078 + 18.0 * hud_scale
+	var center := Vector2(cx, cy)
+	var r := 18.0 * hud_scale
+	var fill := Color(0.12, 0.14, 0.16, 0.55)
+	draw_circle(center, r, fill)
+	draw_arc(center, r, 0, TAU, 32, C_TEXT, 1.5, true)
+	var diag := Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, 0.82)
+	draw_line(center + Vector2(-r * 0.68, -r * 0.68), center + Vector2(r * 0.68, r * 0.68), diag, 2.0)
 
 func _draw_reticle(vp: Vector2) -> void:
 	var center := vp * 0.5
-	var arm := 18.0 * hud_scale
-	var gap := 7.0 * hud_scale
-	draw_line(center + Vector2(-arm, 0.0), center + Vector2(-gap, 0.0), C_RETICLE, 1.4)
-	draw_line(center + Vector2(gap, 0.0), center + Vector2(arm, 0.0), C_RETICLE, 1.4)
-	draw_line(center + Vector2(0.0, -arm), center + Vector2(0.0, -gap), C_RETICLE, 1.4)
-	draw_line(center + Vector2(0.0, gap), center + Vector2(0.0, arm), C_RETICLE, 1.4)
-	draw_circle(center, 1.6 * hud_scale, Color(C_RETICLE.r, C_RETICLE.g, C_RETICLE.b, 0.65))
-
-func _draw_focus_marks(vp: Vector2) -> void:
-	var center := vp * 0.5
-	var width := 56.0 * hud_scale
-	var height := 20.0 * hud_scale
-	var y := center.y + (118.0 * hud_scale)
-	draw_line(Vector2(center.x - width, y), Vector2(center.x - (width * 0.35), y), Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.18), 2.0)
-	draw_line(Vector2(center.x + (width * 0.35), y), Vector2(center.x + width, y), Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.18), 2.0)
-	draw_line(Vector2(center.x - (width * 0.08), y - height), Vector2(center.x - (width * 0.01), y - height), Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.14), 2.0)
-	draw_line(Vector2(center.x + (width * 0.01), y - height), Vector2(center.x + (width * 0.08), y - height), Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.14), 2.0)
-
-func _draw_scan_line(vp: Vector2) -> void:
-	var start_y := vp.y * 0.18
-	var end_y := vp.y * 0.84
-	var y := lerpf(start_y, end_y, scan_line_phase)
-	draw_rect(Rect2(Vector2(124.0 * hud_scale, y), Vector2(vp.x - (248.0 * hud_scale), 1.4)), Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.06), true)
+	var tick := 4.2 * hud_scale
+	var gap := 6.5 * hud_scale
+	var c := Color(C_RETICLE.r, C_RETICLE.g, C_RETICLE.b, 0.34)
+	var w := 1.25
+	draw_line(center - Vector2(0, gap + tick), center - Vector2(0, gap), c, w)
+	draw_line(center + Vector2(0, gap), center + Vector2(0, gap + tick), c, w)
+	draw_line(center - Vector2(gap + tick, 0), center - Vector2(gap, 0), c, w)
+	draw_line(center + Vector2(gap, 0), center + Vector2(gap + tick, 0), c, w)
+	draw_circle(center, 0.7 * hud_scale, Color(c.r, c.g, c.b, 0.42))
 
 func _make_label(text: String, font_size: int, color: Color) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.add_theme_font_size_override("font_size", font_size)
 	label.add_theme_color_override("font_color", color)
-	label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.55))
-	label.add_theme_constant_override("shadow_offset_x", 1)
-	label.add_theme_constant_override("shadow_offset_y", 1)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
-func _make_glass_style(corner_radius: int = 12, bg_color: Color = C_PANEL) -> StyleBoxFlat:
+func _make_glass_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = bg_color
-	style.border_color = C_PANEL_EDGE
-	style.border_width_left = 1
-	style.border_width_top = 1
-	style.border_width_right = 1
-	style.border_width_bottom = 1
-	style.corner_radius_top_left = corner_radius
-	style.corner_radius_top_right = corner_radius
-	style.corner_radius_bottom_left = corner_radius
-	style.corner_radius_bottom_right = corner_radius
-	style.shadow_color = Color(0.0, 0.0, 0.0, 0.25)
-	style.shadow_size = 10
+	style.bg_color = C_PANEL_BG
 	return style
 
 func _set_font_size(label: Label, value: float) -> void:
 	label.add_theme_font_size_override("font_size", maxi(int(round(value)), 10))
 
+# ============================================================================
+# PAUSE MENU
+# ============================================================================
+
 func toggle_pause_menu() -> void:
-	_set_paused(not get_tree().paused)
-
-func _on_pause_pressed() -> void:
-	_set_paused(true)
-
-func _on_resume_pressed() -> void:
-	_set_paused(false)
-
-func _on_exit_pressed() -> void:
-	get_tree().quit()
-
-func _set_paused(paused: bool) -> void:
-	get_tree().paused = paused
-	pause_overlay.visible = paused
-	if paused:
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-		_reset_touch_look()
+	if is_paused:
+		_hide_pause_menu()
 	else:
-		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+		_show_pause_menu()
 
-func _on_look_touch_input(event: InputEvent) -> void:
-	if get_tree().paused or player == null:
+func _show_pause_menu() -> void:
+	if pause_menu != null:
 		return
+	
+	is_paused = true
+	get_tree().paused = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	
+	var pause_scene := load("res://scenes/pause_menu.tscn")
+	if pause_scene:
+		pause_menu = pause_scene.instantiate()
+		pause_menu.resumed.connect(_on_pause_resumed)
+		pause_menu.quit_to_menu.connect(_on_pause_quit_to_menu)
+		add_child(pause_menu)
 
-	if event is InputEventScreenTouch:
-		var touch_event := event as InputEventScreenTouch
-		if touch_event.pressed and active_touch_id == -1:
-			active_touch_id = touch_event.index
-			get_viewport().set_input_as_handled()
-			return
-		if not touch_event.pressed and touch_event.index == active_touch_id:
-			_reset_touch_look()
-			get_viewport().set_input_as_handled()
-			return
+func _hide_pause_menu() -> void:
+	if pause_menu != null:
+		pause_menu.queue_free()
+		pause_menu = null
+	
+	is_paused = false
+	get_tree().paused = false
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
-	if event is InputEventScreenDrag:
-		var drag_event := event as InputEventScreenDrag
-		if drag_event.index == active_touch_id and player.has_method("add_touch_look_delta"):
-			player.call("add_touch_look_delta", drag_event.relative)
-			get_viewport().set_input_as_handled()
-			return
+func _on_pause_resumed() -> void:
+	_hide_pause_menu()
 
-	if event is InputEventMouseButton:
-		var mouse_button := event as InputEventMouseButton
-		if mouse_button.button_index == MOUSE_BUTTON_LEFT:
-			mouse_look_active = mouse_button.pressed
-			if not mouse_look_active:
-				_reset_touch_look()
-			get_viewport().set_input_as_handled()
-			return
+func _on_pause_quit_to_menu() -> void:
+	_hide_pause_menu()
+	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
-	if event is InputEventMouseMotion and mouse_look_active and player.has_method("add_touch_look_delta"):
-		var mouse_motion := event as InputEventMouseMotion
-		player.call("add_touch_look_delta", mouse_motion.relative)
-		get_viewport().set_input_as_handled()
+# ============================================================================
+# MISSION LOG
+# ============================================================================
 
-func _reset_touch_look() -> void:
-	active_touch_id = -1
-	mouse_look_active = false
+func _build_mission_log() -> void:
+	mission_log_container = VBoxContainer.new()
+	mission_log_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mission_log_container.modulate = Color(1, 1, 1, 0.65)
+	mission_log_container.add_theme_constant_override("separation", 6)
+	add_child(mission_log_container)
+
+func _on_mission_log_entry(message: String) -> void:
+	# Create new log entry
+	var entry := {
+		"message": message,
+		"time_remaining": MISSION_LOG_FADE_DURATION,
+		"label": null
+	}
+	
+	var label := Label.new()
+	label.text = "> " + message
+	label.add_theme_font_size_override("font_size", int(13 * hud_scale))
+	label.add_theme_color_override("font_color", Color(0.85, 0.9, 0.95, 1.0))
+	label.add_theme_color_override("font_outline_color", Color(0.02, 0.02, 0.04, 0.9))
+	label.add_theme_constant_override("outline_size", 4)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	
+	entry["label"] = label
+	mission_log_entries.append(entry)
+	mission_log_container.add_child(label)
+	
+	# Limit max entries
+	while mission_log_entries.size() > MISSION_LOG_MAX_ENTRIES:
+		var old_entry: Dictionary = mission_log_entries.pop_front()
+		if old_entry.has("label") and is_instance_valid(old_entry["label"]):
+			old_entry["label"].queue_free()
+
+func _update_mission_log(delta: float) -> void:
+	var vp := get_viewport_rect().size
+	
+	# Position log container at bottom center
+	var log_w := minf(500.0 * hud_scale, vp.x * 0.6)
+	mission_log_container.position = Vector2((vp.x - log_w) * 0.5, vp.y * 0.72)
+	mission_log_container.size = Vector2(log_w, 150 * hud_scale)
+	
+	# Update each entry's fade
+	var entries_to_remove: Array[int] = []
+	for i in range(mission_log_entries.size()):
+		var entry: Dictionary = mission_log_entries[i]
+		entry["time_remaining"] -= delta
+		
+		if entry["time_remaining"] <= 0.0:
+			entries_to_remove.append(i)
+		else:
+			# Fade out in last 2 seconds
+			var alpha := 1.0
+			if entry["time_remaining"] < 2.0:
+				alpha = entry["time_remaining"] / 2.0
+			
+			var label: Label = entry["label"]
+			if is_instance_valid(label):
+				label.modulate.a = alpha
+	
+	# Remove expired entries (reverse order to avoid index issues)
+	for i in range(entries_to_remove.size() - 1, -1, -1):
+		var idx: int = entries_to_remove[i]
+		var entry: Dictionary = mission_log_entries[idx]
+		if entry.has("label") and is_instance_valid(entry["label"]):
+			entry["label"].queue_free()
+		mission_log_entries.remove_at(idx)

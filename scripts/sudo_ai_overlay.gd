@@ -224,15 +224,29 @@ func _on_listening_stopped() -> void:
 
 func _on_state_changed(state_text: String) -> void:
 	match state_text:
+		"CONNECTING":
+			show_overlay()
+			state_label.text = "CONNECTING..."
+			dismiss_timer = -1.0
+		"GREETING":
+			show_overlay()
+			state_label.text = "ACTIVATING..."
+			dismiss_timer = -1.0
 		"SPEAKING":
 			state_label.text = "SUDO AI SPEAKING..."
 			dismiss_timer = -1.0  # Cancel dismiss while speaking
 		"LISTENING":
 			state_label.text = "LISTENING..."
 			dismiss_timer = -1.0
+		"LISTENING FOR SUDO":
+			state_label.text = "LISTENING FOR SUDO"
+			schedule_dismiss()
 		"CONNECTED":
 			if is_visible_overlay:
 				state_label.text = "STANDBY"
+		"TIMEOUT":
+			state_label.text = "STANDBY"
+			schedule_dismiss()
 		"OFFLINE", "ERROR":
 			state_label.text = state_text
 			schedule_dismiss()

@@ -54,7 +54,7 @@ func mark_inspected() -> void:
 
 func _build_visuals() -> void:
 	var body_material := StandardMaterial3D.new()
-	body_material.albedo_color = Color(0.18, 0.16, 0.15, 1.0)
+	body_material.albedo_color = Color(0.25, 0.18, 0.14, 1.0)
 	body_material.metallic = 0.42
 	body_material.roughness = 0.7
 

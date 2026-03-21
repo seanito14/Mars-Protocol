@@ -5,7 +5,7 @@ const WALK_SPEED: float = 4.8
 const RUN_SPEED: float = 7.6
 const MOVE_ACCELERATION: float = 24.0
 const MOVE_DECELERATION: float = 20.0
-const MOUSE_SENSITIVITY: float = 0.0021
+const DEFAULT_MOUSE_SENSITIVITY: float = 0.0021
 const JOY_SENSITIVITY: float = 0.055
 const TOUCH_LOOK_SENSITIVITY: float = 0.022
 const JOY_DEADZONE: float = 0.16
@@ -17,6 +17,12 @@ const WORLD_EDGE_PADDING: float = 5.0
 const OXYGEN_DRAIN_IDLE: float = 0.0794
 const OXYGEN_DRAIN_WALK: float = 0.1111
 const OXYGEN_DRAIN_RUN: float = 0.1534
+const SUIT_POWER_IDLE_DRAIN: float = 0.0324
+const SUIT_POWER_WALK_DRAIN: float = 0.0556
+const SUIT_POWER_RUN_DRAIN: float = 0.091
+const TEMPERATURE_IDLE_DRAIN: float = 0.0218
+const TEMPERATURE_WALK_DRAIN: float = 0.0333
+const TEMPERATURE_RUN_DRAIN: float = 0.05
 const BREATHING_FREQUENCY: float = 1.35
 const BREATHING_VERTICAL_AMOUNT: float = 0.028
 const BREATHING_ROLL_AMOUNT: float = 0.018
@@ -28,6 +34,11 @@ const CAMERA_ROLL_AMOUNT: float = 0.05
 const TERRAIN_TILT_AMOUNT: float = 0.35
 const MOTION_SMOOTHNESS: float = 9.0
 const RUN_FOV_BOOST: float = 5.0
+const SETTINGS_PATH := "user://settings.cfg"
+const MIN_MOUSE_SENSITIVITY: float = 0.0008
+const MAX_MOUSE_SENSITIVITY: float = 0.0055
+const MIN_FOV: float = 60.0
+const MAX_FOV: float = 100.0
 
 @onready var breath_pivot: Node3D = $BreathPivot
 @onready var tilt_pivot: Node3D = $BreathPivot/TiltPivot
@@ -44,8 +55,12 @@ var virtual_look_input: Vector2 = Vector2.ZERO
 var touch_look_delta: Vector2 = Vector2.ZERO
 var base_camera_position: Vector3 = Vector3.ZERO
 var base_camera_fov: float = 76.0
+var mouse_sensitivity: float = DEFAULT_MOUSE_SENSITIVITY
 var ground_clearance: float = 1.7
 var oxygen: float = 100.0
+var suit_power: float = 100.0
+var temperature_resistance: float = 100.0
+var heart_rate: float = 72.0
 var breathing_phase: float = 0.0
 var head_bob_time: float = 0.0
 var storm_intensity: float = 0.0
@@ -58,7 +73,7 @@ var active_waypoint_target: Node3D = null
 var active_waypoint_label: String = ""
 var scan_target_label: String = "Wreck Alpha"
 var marvin_state: String = "STANDBY"
-var marvin_message: String = "Marvin online. Move toward the wreckage and request a scan."
+var marvin_message: String = "Sudo AI online. Move toward the wreckage and request a scan."
 var last_transcript: String = ""
 var sudo_ai_state: String = "OFFLINE"
 var left_arm_root: Node3D
@@ -66,6 +81,7 @@ var left_hand_root: Node3D
 var scanner_root: Node3D
 var visor_glass_material: StandardMaterial3D
 var scanner_screen_material: StandardMaterial3D
+var storm_dust: GPUParticles3D
 
 func _ready() -> void:
 	add_to_group("player")
@@ -76,7 +92,9 @@ func _ready() -> void:
 	ground_clearance = _get_ground_clearance()
 	base_camera_position = camera.position
 	base_camera_fov = camera.fov
+	_apply_user_settings()
 	_build_suit_rig()
+	_build_storm_dust_particles()
 	EventBus.transcript_received.connect(_on_transcript_received)
 	EventBus.agent_response_received.connect(_on_agent_response_received)
 	EventBus.conversation_connected.connect(_on_conversation_connected)
@@ -105,8 +123,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var mouse_event := event as InputEventMouseMotion
-		rotate_y(-mouse_event.relative.x * MOUSE_SENSITIVITY)
-		look_pitch = clampf(look_pitch - (mouse_event.relative.y * MOUSE_SENSITIVITY), -deg_to_rad(80.0), deg_to_rad(80.0))
+		rotate_y(-mouse_event.relative.x * mouse_sensitivity)
+		look_pitch = clampf(look_pitch - (mouse_event.relative.y * mouse_sensitivity), -deg_to_rad(80.0), deg_to_rad(80.0))
 		pitch_pivot.rotation.x = look_pitch
 		return
 
@@ -116,10 +134,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			request_interaction()
 		elif key_event.physical_keycode == KEY_T:
 			request_scan()
-		elif key_event.physical_keycode == KEY_V:
-			var voice_service := _get_voice_service()
-			if voice_service != null and voice_service.has_method("toggle_listening"):
-				voice_service.call("toggle_listening")
 		elif key_event.physical_keycode == KEY_F:
 			_toggle_sudo_ai_activation()
 		return
@@ -129,6 +143,19 @@ func _unhandled_input(event: InputEvent) -> void:
 		if joypad_event.pressed and joypad_event.button_index == JOY_BUTTON_X:
 			_toggle_sudo_ai_activation()
 			get_viewport().set_input_as_handled()
+
+func _apply_user_settings() -> void:
+	var config := ConfigFile.new()
+	if config.load(SETTINGS_PATH) != OK:
+		return
+	mouse_sensitivity = clampf(
+		float(config.get_value("controls", "mouse_sensitivity", DEFAULT_MOUSE_SENSITIVITY)),
+		MIN_MOUSE_SENSITIVITY,
+		MAX_MOUSE_SENSITIVITY
+	)
+	var configured_fov := clampf(float(config.get_value("video", "fov", base_camera_fov)), MIN_FOV, MAX_FOV)
+	base_camera_fov = configured_fov
+	camera.fov = configured_fov
 
 func _physics_process(delta: float) -> void:
 	var ground_height := _get_ground_height()
@@ -176,10 +203,12 @@ func _physics_process(delta: float) -> void:
 		velocity.y = 0.0
 
 	_clamp_to_world()
+	_enforce_ground_floor()
 	_update_biostats(delta, input_strength, is_running)
 	_update_interaction_focus()
 	_handle_interaction_input()
 	_update_presentation(delta, input_dir, is_grounded, is_running)
+	_update_storm_dust()
 
 func set_virtual_move_input(value: Vector2) -> void:
 	virtual_move_input = value.limit_length()
@@ -201,11 +230,25 @@ func request_scan() -> void:
 		scene.call("trigger_manual_scan", self)
 
 func _toggle_sudo_ai_activation() -> void:
-	if SudoAIAgent and SudoAIAgent.is_connected_to_agent():
-		if SudoAIAgent.hot_word_active:
-			SudoAIAgent.deactivate_hot_word()
-		else:
-			SudoAIAgent.activate_hot_word()
+	if not SudoAIAgent:
+		return
+	if SudoAIAgent.hot_word_active:
+		SudoAIAgent.deactivate_hot_word()
+	else:
+		SudoAIAgent.activate_hot_word()
+
+func restore_oxygen(amount: float) -> void:
+	oxygen = clampf(oxygen + amount, 12.0, GameState.get_max_oxygen())
+
+func restore_suit_power(amount: float) -> void:
+	suit_power = clampf(suit_power + amount, 0.0, GameState.get_max_suit_power())
+
+func restore_temperature_resistance(amount: float) -> void:
+	temperature_resistance = clampf(
+		temperature_resistance + amount,
+		0.0,
+		GameState.get_max_temperature_resistance()
+	)
 
 func set_waypoint_target(target: Node3D, label: String) -> void:
 	active_waypoint_target = target
@@ -228,7 +271,13 @@ func get_status_snapshot() -> Dictionary:
 
 	return {
 		"oxygen": oxygen,
-		"oxygen_max": 100.0,
+		"oxygen_max": GameState.get_max_oxygen(),
+		"suit_power": suit_power,
+		"suit_power_max": GameState.get_max_suit_power(),
+		"temperature_resistance": temperature_resistance,
+		"temperature_resistance_max": GameState.get_max_temperature_resistance(),
+		"heart_rate": heart_rate,
+		"waypoint_bearing_deg": _get_waypoint_bearing_deg(),
 		"breathing_phase": breathing_phase,
 		"storm_intensity": storm_intensity,
 		"active_waypoint": active_waypoint_label,
@@ -295,10 +344,33 @@ func _wants_to_run(input_strength: float) -> bool:
 	return virtual_move_input.length() > 0.9
 
 func _update_biostats(delta: float, input_strength: float, is_running: bool) -> void:
-	var drain := OXYGEN_DRAIN_IDLE
+	var oxygen_drain := OXYGEN_DRAIN_IDLE
+	var suit_drain := SUIT_POWER_IDLE_DRAIN
+	var temp_drain := TEMPERATURE_IDLE_DRAIN
 	if input_strength > 0.04:
-		drain = OXYGEN_DRAIN_RUN if is_running else OXYGEN_DRAIN_WALK
-	oxygen = clampf(oxygen - (drain * delta), 12.0, 100.0)
+		oxygen_drain = OXYGEN_DRAIN_RUN if is_running else OXYGEN_DRAIN_WALK
+		suit_drain = SUIT_POWER_RUN_DRAIN if is_running else SUIT_POWER_WALK_DRAIN
+		temp_drain = TEMPERATURE_RUN_DRAIN if is_running else TEMPERATURE_WALK_DRAIN
+
+	var suit_mult := GameState.get_suit_drain_multiplier()
+	var temp_mult := suit_mult
+	if GameState.storm_eta_seconds <= 0.0:
+		temp_mult *= 15.0
+
+	var o_max := GameState.get_max_oxygen()
+	oxygen = clampf(oxygen - (oxygen_drain * delta), 12.0, o_max)
+	suit_power = clampf(suit_power - (suit_drain * suit_mult * delta), 0.0, GameState.get_max_suit_power())
+	temperature_resistance = clampf(
+		temperature_resistance - (temp_drain * temp_mult * delta),
+		0.0,
+		GameState.get_max_temperature_resistance()
+	)
+
+	var effort: float = 0.18 + (input_strength * (0.5 if not is_running else 0.95))
+	var oxygen_stress: float = 1.0 - (oxygen / maxf(o_max, 0.001))
+	var thermal_stress: float = 1.0 - (temperature_resistance / maxf(GameState.get_max_temperature_resistance(), 0.001))
+	var target_hr: float = 72.0 + (effort * 24.0) + (oxygen_stress * 16.0) + (thermal_stress * 10.0)
+	heart_rate = lerpf(heart_rate, target_hr, delta * 1.4)
 
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("get_storm_intensity"):
@@ -338,7 +410,7 @@ func _update_interaction_focus() -> void:
 		focused_prompt = str(focused_interactable.call("get_interaction_prompt")) if focused_interactable.has_method("get_interaction_prompt") else ""
 	else:
 		focused_name = "Open Terrain"
-		focused_prompt = "Walk the crater, inspect the wreckage, and talk to Marvin."
+		focused_prompt = "Walk the crater, inspect the wreckage, and talk to Sudo AI."
 
 func _handle_interaction_input() -> void:
 	var keyboard_interact := Input.is_physical_key_pressed(KEY_E)
@@ -402,6 +474,58 @@ func _update_presentation(delta: float, input_dir: Vector2, is_grounded: bool, i
 		scanner_screen_material.emission_energy_multiplier = 1.3 + (storm_intensity * 1.1) + (move_strength * 0.4)
 	if visor_glass_material != null:
 		visor_glass_material.albedo_color.a = 0.025 + (storm_intensity * 0.035)
+
+func _build_storm_dust_particles() -> void:
+	storm_dust = GPUParticles3D.new()
+	storm_dust.name = "StormDustParticles"
+	camera.add_child(storm_dust)
+	storm_dust.position = Vector3(0.0, 0.0, -2.4)
+	storm_dust.amount = 240
+	storm_dust.lifetime = 2.2
+	storm_dust.explosiveness = 0.0
+	storm_dust.randomness = 0.5
+	storm_dust.visibility_aabb = AABB(Vector3(-32, -24, -18), Vector3(64, 48, 28))
+	storm_dust.transform_align = GPUParticles3D.TRANSFORM_ALIGN_Z_BILLBOARD
+	storm_dust.emitting = false
+
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	pm.emission_box_extents = Vector3(8.0, 5.5, 1.4)
+	pm.direction = Vector3(0.18, 0.08, 1.0)
+	pm.spread = 0.75
+	pm.initial_velocity_min = 0.9
+	pm.initial_velocity_max = 4.2
+	pm.angular_velocity_min = -0.8
+	pm.angular_velocity_max = 0.8
+	pm.gravity = Vector3(0.15, -0.05, 0.0)
+	pm.scale_min = 0.07
+	pm.scale_max = 0.24
+	pm.color = Color(0.78, 0.48, 0.22, 0.55)
+	storm_dust.process_material = pm
+
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.38, 0.38)
+	storm_dust.draw_pass_1 = quad
+
+	var dust_mat := StandardMaterial3D.new()
+	dust_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	dust_mat.albedo_color = Color(0.85, 0.52, 0.24, 0.48)
+	dust_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	dust_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	dust_mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	storm_dust.material_override = dust_mat
+
+func _storm_screen_strength() -> float:
+	if GameState.storm_eta_seconds <= 0.0:
+		return 1.0
+	return clampf(1.0 - GameState.storm_eta_seconds / 300.0, 0.0, 1.0)
+
+func _update_storm_dust() -> void:
+	if storm_dust == null:
+		return
+	var s := _storm_screen_strength()
+	storm_dust.emitting = s > 0.02
+	storm_dust.speed_scale = lerpf(0.45, 1.45, s)
 
 func _build_suit_rig() -> void:
 	var suit_root := Node3D.new()
@@ -522,6 +646,23 @@ func _clamp_to_world() -> void:
 	global_position.x = clampf(global_position.x, -world_half_size, world_half_size)
 	global_position.z = clampf(global_position.z, -world_half_size, world_half_size)
 
+func _enforce_ground_floor() -> void:
+	var ground_height := _get_ground_height()
+	if global_position.y < ground_height - 1.0:
+		global_position.y = ground_height
+		velocity.y = 0.0
+
+func _get_waypoint_bearing_deg() -> float:
+	if active_waypoint_target == null or not is_instance_valid(active_waypoint_target):
+		return -1000.0
+	var to_wp := active_waypoint_target.global_position - global_position
+	var flat := Vector2(to_wp.x, to_wp.z)
+	if flat.length_squared() < 0.01:
+		return -1000.0
+	flat = flat.normalized()
+	var fwd := Vector2(-sin(rotation.y), -cos(rotation.y))
+	return rad_to_deg(fwd.angle_to(flat))
+
 func _get_heading_degrees() -> float:
 	return fposmod(rad_to_deg(rotation.y), 360.0)
 
@@ -535,18 +676,12 @@ func _get_elevation_meters() -> float:
 	var ground_height := _get_ground_height() - ground_clearance
 	return (ground_height - 42.0) * 8.0
 
-func _get_voice_service() -> Node:
-	var current_scene := get_tree().current_scene
-	if current_scene == null:
-		return null
-	return current_scene.get_node_or_null("VoiceService")
-
 func _on_transcript_received(text: String) -> void:
 	last_transcript = text
 	marvin_state = "PROCESSING"
 
 func _on_agent_response_received(text: String) -> void:
-	marvin_state = "MARVIN LINKED"
+	marvin_state = "SUDO AI LINKED"
 	marvin_message = text
 
 func _on_conversation_connected(mode: String) -> void:

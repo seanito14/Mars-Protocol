@@ -5,13 +5,16 @@ const DEFAULT_VIDEO_SIZE := Vector2i(1920, 1080)
 const EDGE_SHADER := preload("res://shaders/intro_edge_fill.gdshader")
 
 @export_file("*.ogv") var intro_stream_path: String = "res://assets/video/opening_scene.ogv"
-@export_file("*.tscn") var next_scene_path: String = "res://scenes/hero_demo.tscn"
+@export_file("*.tscn") var next_scene_path: String = "res://scenes/landing_valley.tscn"
 @export_range(0.0, 10.0, 0.1) var skip_delay_seconds: float = 1.0
 @export_range(0.05, 5.0, 0.05) var fade_duration: float = 0.4
 @export_enum("mirror_blur", "none") var adaptive_fill_mode: String = "mirror_blur"
 
 var _transitioning: bool = false
 var _skip_allowed: bool = false
+var _next_scene_preload_requested: bool = false
+var _next_scene_preload_failed: bool = false
+var _next_scene_resource: PackedScene = null
 
 var _background_rect: ColorRect
 var _main_video_rect: TextureRect
@@ -42,12 +45,16 @@ func _ready() -> void:
 	_video_player.stream = intro_stream
 	_video_player.finished.connect(_on_intro_finished)
 	_video_player.play()
+	_begin_next_scene_preload()
 	_fade_rect.modulate.a = 1.0
 	_skip_hint_label.modulate.a = 0.0
 
 	var fade_in := create_tween()
 	fade_in.tween_property(_fade_rect, "modulate:a", 0.0, fade_duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	get_tree().create_timer(skip_delay_seconds).timeout.connect(_unlock_skip)
+
+func _process(_delta: float) -> void:
+	_poll_next_scene_preload()
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST and _skip_allowed:
@@ -235,6 +242,13 @@ func _on_intro_finished() -> void:
 func _go_to_next_scene() -> void:
 	if is_instance_valid(_video_player):
 		_video_player.stop()
+	var preloaded_scene := _get_preloaded_next_scene()
+	if preloaded_scene != null:
+		var packed_scene_error := get_tree().change_scene_to_packed(preloaded_scene)
+		if packed_scene_error == OK:
+			return
+		push_warning("Preloaded scene handoff failed for %s (error %d). Falling back to file load." % [next_scene_path, packed_scene_error])
+
 	var scene_error := get_tree().change_scene_to_file(next_scene_path)
 	if scene_error != OK:
 		push_error("Failed to load next scene: %s (error %d)" % [next_scene_path, scene_error])
@@ -245,6 +259,62 @@ func _load_intro_stream() -> VideoStream:
 	if not ResourceLoader.exists(intro_stream_path):
 		return null
 	return load(intro_stream_path) as VideoStream
+
+func _begin_next_scene_preload() -> void:
+	if next_scene_path.is_empty():
+		return
+	if not ResourceLoader.exists(next_scene_path):
+		_next_scene_preload_failed = true
+		return
+
+	# `landing_valley` currently loads more reliably through a direct PackedScene
+	# fetch than through threaded scene preloading.
+	if next_scene_path == "res://scenes/landing_valley.tscn":
+		_next_scene_resource = load(next_scene_path) as PackedScene
+		_next_scene_preload_requested = _next_scene_resource != null
+		_next_scene_preload_failed = _next_scene_resource == null
+		if _next_scene_preload_failed:
+			push_warning("Unable to preload next scene %s via direct load." % next_scene_path)
+		return
+
+	var request_error := ResourceLoader.load_threaded_request(next_scene_path, "PackedScene")
+	if request_error == OK:
+		_next_scene_preload_requested = true
+		return
+
+	# If another threaded request is already active for this path, keep polling.
+	if request_error == ERR_BUSY:
+		_next_scene_preload_requested = true
+		return
+
+	_next_scene_preload_failed = true
+	push_warning("Unable to preload next scene %s (error %d)." % [next_scene_path, request_error])
+
+func _poll_next_scene_preload() -> void:
+	if not _next_scene_preload_requested:
+		return
+	if _next_scene_resource != null:
+		return
+	if _next_scene_preload_failed:
+		return
+
+	var status := ResourceLoader.load_threaded_get_status(next_scene_path)
+	match status:
+		ResourceLoader.THREAD_LOAD_LOADED:
+			var loaded_resource := ResourceLoader.load_threaded_get(next_scene_path)
+			_next_scene_resource = loaded_resource as PackedScene
+			if _next_scene_resource == null:
+				_next_scene_preload_failed = true
+		ResourceLoader.THREAD_LOAD_FAILED, ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
+			_next_scene_preload_failed = true
+		_:
+			pass
+
+func _get_preloaded_next_scene() -> PackedScene:
+	if _next_scene_resource != null:
+		return _next_scene_resource
+	_poll_next_scene_preload()
+	return _next_scene_resource
 
 func _ensure_skip_intro_action() -> void:
 	if not InputMap.has_action("skip_intro"):

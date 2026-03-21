@@ -1,9 +1,10 @@
 import socket
 import json
 import time
+import os
 
 UDP_IP = "127.0.0.1"
-UDP_PORT = 4242
+UDP_PORT = int(os.environ.get("COMMAND_SERVER_PORT", "4242"))
 
 print(f"Mars Terraform Voice Bridge (Python -> Godot)")
 print(f"Targeting {UDP_IP}:{UDP_PORT}")
