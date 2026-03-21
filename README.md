@@ -1,4 +1,4 @@
-# 🚀 ProjectMarsHighFidelity  
+# Mars Protocol
 ### Voice-Activated AI Simulation on Mars
 
 A high-fidelity, open-world Mars exploration simulation built in **Godot 4.6.1**, combining **agentic AI**, **real-time voice interaction**, and **large-scale terrain systems** into a cinematic, playable experience.
@@ -7,7 +7,7 @@ A high-fidelity, open-world Mars exploration simulation built in **Godot 4.6.1**
 
 ## 💡 Core Vision
 
-ProjectMarsHighFidelity is not just a game — it is a **voice-first AI operating system for simulation environments**, where players interact with intelligent agents, manage a Mars colony, and experience dynamic, reactive worlds.
+Mars Protocol is not just a game — it is a **voice-first AI operating system for simulation environments**, where players interact with intelligent agents, manage a Mars colony, and experience dynamic, reactive worlds.
 
 ---
 
@@ -161,7 +161,7 @@ Contributions will open post-core milestone.
 
 ## 🛰 Final Note
 
-ProjectMarsHighFidelity is designed to explore the boundary between:
+Mars Protocol is designed to explore the boundary between:
 
 > **Game × Simulation × AI Operating System**
 
