@@ -1,19 +1,25 @@
 class_name HeroHUD
 extends Control
 
+const VirtualJoystickScript = preload("res://scripts/virtual_joystick.gd")
+
 const C_FRAME_DARK := Color(0.1, 0.055, 0.03, 0.985)
 const C_FRAME_MID := Color(0.3, 0.16, 0.08, 0.92)
 const C_FRAME_GLOW := Color(0.58, 0.34, 0.18, 0.32)
-const C_SLOT_GLOW := Color(0.4, 0.86, 1.0, 0.88)
-const C_AMBER := Color(0.96, 0.62, 0.18, 0.82)
+const C_SLOT_GLOW := Color(1.0, 0.63, 0.24, 0.72)
+const C_AMBER := Color(1.0, 0.63, 0.24, 0.92)
 
-const C_TEXT := Color(0.92, 0.96, 1.0, 0.95)
-const C_TEXT_DIM := Color(0.73, 0.82, 0.9, 0.62)
-const C_PANEL_BG := Color(0.18, 0.2, 0.23, 0.2)
-const C_LINE := Color(0.73, 0.79, 0.86, 0.36)
-const C_RETICLE := Color(0.68, 0.88, 0.98, 0.36)
-const C_GRID_FAINT := Color(0.58, 0.66, 0.74, 0.08)
-const C_COMPASS := Color(0.82, 0.92, 0.98, 0.82)
+const C_TEXT := Color(1.0, 0.91, 0.82, 0.98)
+const C_TEXT_DIM := Color(1.0, 0.77, 0.58, 0.7)
+const C_PANEL_BG := Color(0.12, 0.08, 0.06, 0.2)
+const C_LINE := Color(1.0, 0.58, 0.22, 0.4)
+const C_RETICLE := Color(1.0, 0.62, 0.22, 0.42)
+const C_GRID_FAINT := Color(1.0, 0.62, 0.22, 0.08)
+const C_COMPASS := Color(1.0, 0.8, 0.58, 0.88)
+const C_GLASS_EDGE := Color(1.0, 0.7, 0.34, 0.46)
+const C_GLASS_SHEEN := Color(1.0, 0.8, 0.64, 0.08)
+const C_JOYSTICK_RING := Color(1.0, 0.58, 0.22, 0.22)
+const C_JOYSTICK_KNOB := Color(1.0, 0.74, 0.44, 0.28)
 
 var player: HeroPlayer = null
 
@@ -46,6 +52,13 @@ var compass_wp_label: Label
 var interact_prompt_label: Label
 
 var look_touch_area: Control
+var left_stick
+var right_stick
+var telemetry_left: Control
+var telemetry_right: Control
+var telemetry_o2_label: Label
+var telemetry_integrity_label: Label
+var telemetry_rad_label: Label
 var hud_scale: float = 1.0
 var vignette_rect: ColorRect
 var vignette_material: ShaderMaterial
@@ -78,6 +91,11 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if player == null or not is_instance_valid(player):
 		player = get_tree().get_first_node_in_group("player") as HeroPlayer
+		if player != null:
+			if left_stick != null and not left_stick.vector_changed.is_connected(player.set_virtual_move_input):
+				left_stick.vector_changed.connect(player.set_virtual_move_input)
+			if right_stick != null and not right_stick.vector_changed.is_connected(player.set_virtual_look_input):
+				right_stick.vector_changed.connect(player.set_virtual_look_input)
 
 	if player != null:
 		var snap: Dictionary = player.get_status_snapshot()
@@ -85,8 +103,7 @@ func _process(_delta: float) -> void:
 		var oxygen_pct: float = (float(snap.get("oxygen", 0.0)) / maxf(oxygen_max, 0.001)) * 100.0
 		var s_max: float = float(snap.get("suit_power_max", 100.0))
 		var s_pct: float = (float(snap.get("suit_power", 0.0)) / maxf(s_max, 0.001)) * 100.0
-		var temp_max: float = float(snap.get("temperature_resistance_max", 100.0))
-		var temp_pct: float = (float(snap.get("temperature_resistance", 0.0)) / maxf(temp_max, 0.001)) * 100.0
+		var rad_pct: float = clampf(float(snap.get("storm_intensity", 0.0)) * 100.0, 0.0, 100.0)
 		var heading_degrees: int = int(round(float(snap.get("heading_degrees", 0.0))))
 		var heading_label: String = str(snap.get("heading_label", "N"))
 		var coords: Vector2 = snap.get("coords", Vector2.ZERO)
@@ -96,12 +113,15 @@ func _process(_delta: float) -> void:
 		tl_05e_label.text = "%03d" % clampi(int(round(float(snap.get("elevation_m", 0.0)))), 0, 999)
 		tl_general_label.text = "%s   %s" % [str(snap.get("time_label", "00:00")), heading_label]
 		tr_max_label.text = "MAX\n%02d PSI" % clampi(int(round(float(snap.get("heart_rate", 55.0)) * 0.76)), 10, 99)
-		bl_stat_line1.text = "O2 %02d   PWR %02d   TMP %02d" % [
+		bl_stat_line1.text = "O2 %02d   INT %02d   RAD %02d" % [
 			clampi(int(round(oxygen_pct)), 0, 99),
 			clampi(int(round(s_pct)), 0, 99),
-			clampi(int(round(temp_pct)), 0, 99)
+			clampi(int(round(rad_pct)), 0, 99)
 		]
 		bl_stat_line2.text = "GRID %05.1f / %05.1f" % [coords.x, coords.y]
+		telemetry_o2_label.text = "O2  %03d%%" % clampi(int(round(oxygen_pct)), 0, 100)
+		telemetry_integrity_label.text = "SUIT  %03d%%" % clampi(int(round(s_pct)), 0, 100)
+		telemetry_rad_label.text = "RAD  %03d%%" % clampi(int(round(rad_pct)), 0, 100)
 
 		br_channel_label.text = "Channel"
 		br_fiction_label.text = "%s   %s" % [str(snap.get("storm_eta_label", "Calm")), str(snap.get("scan_target_label", "Valley"))]
@@ -169,10 +189,12 @@ func _build_hud() -> void:
 	_build_bottom_left()
 	_build_bottom_right()
 	_build_compass()
+	_build_telemetry_panels()
 	_build_interact_prompt()
 	compass_root.visible = true
 	bottom_left_panel.visible = true
 	_build_touch_area()
+	_build_virtual_joysticks()
 
 func _build_top_left() -> void:
 	top_left_rail = Control.new()
@@ -291,6 +313,87 @@ func _build_touch_area() -> void:
 	look_touch_area.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(look_touch_area)
 
+func _build_telemetry_panels() -> void:
+	telemetry_left = Control.new()
+	telemetry_left.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(telemetry_left)
+
+	var left_panel := Panel.new()
+	left_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left_panel.add_theme_stylebox_override("panel", _make_glass_style())
+	left_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	telemetry_left.add_child(left_panel)
+
+	telemetry_o2_label = _make_label("O2  100%", 16, C_AMBER)
+	telemetry_left.add_child(telemetry_o2_label)
+
+	telemetry_integrity_label = _make_label("SUIT  100%", 15, C_TEXT)
+	telemetry_left.add_child(telemetry_integrity_label)
+
+	telemetry_right = Control.new()
+	telemetry_right.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(telemetry_right)
+
+	var right_panel := Panel.new()
+	right_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right_panel.add_theme_stylebox_override("panel", _make_glass_style())
+	right_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	telemetry_right.add_child(right_panel)
+
+	telemetry_rad_label = _make_label("RAD  000%", 16, C_AMBER)
+	telemetry_rad_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	telemetry_right.add_child(telemetry_rad_label)
+
+func _build_virtual_joysticks() -> void:
+	left_stick = _create_virtual_joystick(true)
+	add_child(left_stick)
+	if player != null:
+		left_stick.vector_changed.connect(player.set_virtual_move_input)
+
+	right_stick = _create_virtual_joystick(false)
+	add_child(right_stick)
+	if player != null:
+		right_stick.vector_changed.connect(player.set_virtual_look_input)
+
+func _create_virtual_joystick(is_left: bool) -> Control:
+	var stick = VirtualJoystickScript.new()
+	stick.mouse_filter = Control.MOUSE_FILTER_STOP
+	stick.max_radius = 42.0
+	stick.deadzone = 0.1
+	stick.z_index = 6
+
+	var backdrop := Control.new()
+	backdrop.name = "Backdrop"
+	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	backdrop.draw.connect(_draw_joystick_backdrop.bind(backdrop, is_left))
+	stick.add_child(backdrop)
+
+	var knob := Control.new()
+	knob.name = "Knob"
+	knob.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	knob.size = Vector2(42.0, 42.0)
+	knob.draw.connect(_draw_joystick_knob.bind(knob))
+	stick.add_child(knob)
+
+	return stick
+
+func _draw_joystick_backdrop(target: Control, is_left: bool) -> void:
+	var center := target.size * 0.5
+	var outer_radius := minf(target.size.x, target.size.y) * 0.5 - 6.0
+	target.draw_circle(center, outer_radius, Color(C_PANEL_BG.r, C_PANEL_BG.g, C_PANEL_BG.b, 0.12))
+	target.draw_arc(center, outer_radius, 0.0, TAU, 64, C_JOYSTICK_RING, 2.0, true)
+	target.draw_arc(center, outer_radius * 0.66, 0.0, TAU, 64, Color(C_JOYSTICK_RING.r, C_JOYSTICK_RING.g, C_JOYSTICK_RING.b, 0.14), 1.2, true)
+	var accent := Color(C_AMBER.r, C_AMBER.g, C_AMBER.b, 0.2 if is_left else 0.16)
+	target.draw_line(center + Vector2(-outer_radius * 0.42, 0.0), center + Vector2(outer_radius * 0.42, 0.0), accent, 1.2)
+	target.draw_line(center + Vector2(0.0, -outer_radius * 0.42), center + Vector2(0.0, outer_radius * 0.42), accent, 1.2)
+
+func _draw_joystick_knob(target: Control) -> void:
+	var center := target.size * 0.5
+	var radius := minf(target.size.x, target.size.y) * 0.5 - 2.0
+	target.draw_circle(center, radius, C_JOYSTICK_KNOB)
+	target.draw_arc(center, radius, 0.0, TAU, 48, Color(C_AMBER.r, C_AMBER.g, C_AMBER.b, 0.36), 1.4, true)
+
 func _on_window_resized() -> void:
 	var vp := get_viewport().get_visible_rect().size
 	hud_scale = clampf(sqrt(vp.x * vp.y) / sqrt(1920.0 * 1080.0), 0.55, 1.25)
@@ -360,6 +463,38 @@ func _on_window_resized() -> void:
 	interact_prompt_label.position = Vector2((vp.x - ip_w) * 0.5, vp.y * 0.5 + 52.0 * hud_scale)
 	interact_prompt_label.size = Vector2(ip_w, 64.0 * hud_scale)
 
+	# Floating telemetry bands
+	var telemetry_w := minf(220.0 * hud_scale, vp.x * 0.22)
+	var telemetry_h := 54.0 * hud_scale
+	telemetry_left.size = Vector2(telemetry_w, telemetry_h)
+	telemetry_left.position = Vector2(vp.x * 0.08, vp.y * 0.18)
+	telemetry_o2_label.position = Vector2(14.0 * hud_scale, 8.0 * hud_scale)
+	telemetry_o2_label.size = Vector2(telemetry_w - 24.0 * hud_scale, 18.0 * hud_scale)
+	telemetry_integrity_label.position = Vector2(14.0 * hud_scale, 28.0 * hud_scale)
+	telemetry_integrity_label.size = Vector2(telemetry_w - 24.0 * hud_scale, 16.0 * hud_scale)
+
+	telemetry_right.size = Vector2(telemetry_w, 38.0 * hud_scale)
+	telemetry_right.position = Vector2(vp.x - telemetry_w - vp.x * 0.08, vp.y * 0.19)
+	telemetry_rad_label.position = Vector2(12.0 * hud_scale, 10.0 * hud_scale)
+	telemetry_rad_label.size = Vector2(telemetry_w - 24.0 * hud_scale, 18.0 * hud_scale)
+
+	# Virtual joysticks for iPad
+	var stick_size := Vector2(132.0, 132.0) * hud_scale
+	left_stick.size = stick_size
+	left_stick.position = Vector2(maxf(24.0, vp.x * 0.06), vp.y - stick_size.y - maxf(28.0, vp.y * 0.08))
+	right_stick.size = stick_size
+	right_stick.position = Vector2(vp.x - stick_size.x - maxf(24.0, vp.x * 0.06), vp.y - stick_size.y - maxf(28.0, vp.y * 0.08))
+	left_stick.queue_redraw()
+	right_stick.queue_redraw()
+	for child in left_stick.get_children():
+		if child is Control:
+			(child as Control).size = stick_size
+			(child as Control).queue_redraw()
+	for child in right_stick.get_children():
+		if child is Control:
+			(child as Control).size = stick_size
+			(child as Control).queue_redraw()
+
 	_apply_font_scale()
 
 func _apply_font_scale() -> void:
@@ -374,6 +509,9 @@ func _apply_font_scale() -> void:
 	_set_font_size(br_id_label, 15 * hud_scale)
 	_set_font_size(compass_heading_label, 15 * hud_scale)
 	_set_font_size(compass_wp_label, 12 * hud_scale)
+	_set_font_size(telemetry_o2_label, 14 * hud_scale)
+	_set_font_size(telemetry_integrity_label, 12 * hud_scale)
+	_set_font_size(telemetry_rad_label, 14 * hud_scale)
 	_set_font_size(interact_prompt_label, 14 * hud_scale)
 
 func _draw_visor_frame(vp: Vector2, layout: Dictionary) -> void:
@@ -520,6 +658,19 @@ func _make_label(text: String, font_size: int, color: Color) -> Label:
 func _make_glass_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = C_PANEL_BG
+	style.border_width_left = 1
+	style.border_width_top = 1
+	style.border_width_right = 1
+	style.border_width_bottom = 1
+	style.border_color = C_GLASS_EDGE
+	style.corner_radius_top_left = 14
+	style.corner_radius_top_right = 14
+	style.corner_radius_bottom_right = 14
+	style.corner_radius_bottom_left = 14
+	style.shadow_color = Color(0.0, 0.0, 0.0, 0.2)
+	style.shadow_size = 10
+	style.anti_aliasing = true
+	style.anti_aliasing_size = 1.4
 	return style
 
 func _set_font_size(label: Label, value: float) -> void:

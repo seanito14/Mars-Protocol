@@ -3,7 +3,7 @@
 [ext_resource type="Shader" path="res://shaders/terrain.gdshader" id="1_shader"]
 [ext_resource type="Script" path="res://scripts/player.gd" id="2_player"]
 [ext_resource type="PackedScene" uid="uid://c7y7y7y7y7y7y" path="res://scenes/rover.tscn" id="3_rover"]
-[ext_resource type="PackedScene" uid="uid://d1u2u3u4u5u6u" path="res://scenes/hud.tscn" id="4_hud"]
+[ext_resource type="PackedScene" uid="uid://hero_hud_1234" path="res://scenes/hero_hud.tscn" id="4_hud"]
 [ext_resource type="PackedScene" uid="uid://ddy6s8xndhdw4" path="res://scenes/drone.tscn" id="5_drone"]
 [ext_resource type="Script" path="res://scripts/world.gd" id="6_world"]
 
@@ -44,10 +44,10 @@ radius = 0.5
 height = 2.0
 
 [sub_resource type="PhysicalSkyMaterial" id="PhysicalSkyMaterial_1"]
-rayleigh_color = Color(0.88, 0.48, 0.34, 1)
-mie_color = Color(0.74, 0.4, 0.29, 1)
-turbidity = 40.0
-ground_color = Color(0.15, 0.08, 0.05, 1)
+rayleigh_color = Color(0.98, 0.61, 0.46, 1)
+mie_color = Color(1, 0.55, 0.33, 1)
+turbidity = 68.0
+ground_color = Color(0.21, 0.1, 0.06, 1)
 
 [sub_resource type="Sky" id="Sky_1"]
 sky_material = SubResource("PhysicalSkyMaterial_1")
@@ -56,13 +56,18 @@ sky_material = SubResource("PhysicalSkyMaterial_1")
 background_mode = 2
 sky = SubResource("Sky_1")
 ambient_light_source = 2
-ambient_light_color = Color(0.3, 0.15, 0.1, 1)
+ambient_light_color = Color(0.42, 0.22, 0.16, 1)
 tonemap_mode = 3
 ssao_enabled = false
 sdfgi_enabled = false
 fog_enabled = true
-fog_light_color = Color(0.88, 0.48, 0.34, 1)
+fog_light_color = Color(1, 0.55, 0.29, 1)
 fog_density = 0.004
+fog_sun_scatter = 0.65
+fog_aerial_perspective = 0.75
+volumetric_fog_enabled = true
+volumetric_fog_density = 0.15
+volumetric_fog_albedo = Color(1, 0.54902, 0.290196, 1)
 
 [node name="World" type="Node3D"]
 script = ExtResource("6_world")
