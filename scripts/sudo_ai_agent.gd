@@ -56,6 +56,8 @@ var pending_scene_context: String = ""
 var last_scene_path: String = ""
 var last_routed_transcript: String = ""
 var gameplay_voice_enabled: bool = false
+var runtime_bootstrapped: bool = false
+var scene_voice_started: bool = false
 var bridge_launch_pid: int = -1
 var bridge_base_url: String = BRIDGE_BASE_URL
 var bridge_available: bool = false
@@ -111,9 +113,11 @@ func _ready() -> void:
 
 	DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_ENDED, Callable(self, "_on_tts_utterance_ended"))
 	DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_CANCELED, Callable(self, "_on_tts_utterance_canceled"))
-	call_deferred("_deferred_setup")
 
-func _deferred_setup() -> void:
+func _ensure_runtime_bootstrapped() -> void:
+	if runtime_bootstrapped:
+		return
+	runtime_bootstrapped = true
 	_setup_microphone()
 	_setup_wake_udp_listener()
 	_request_bridge_health()
@@ -146,8 +150,9 @@ func _setup_wake_udp_listener() -> void:
 
 func _process(delta: float) -> void:
 	_update_scene_gate()
-	_poll_wake_events()
-	_poll_bridge_health(delta)
+	if runtime_bootstrapped:
+		_poll_wake_events()
+		_poll_bridge_health(delta)
 	_update_volume_levels()
 
 	if reconnect_timer >= 0.0:
@@ -189,6 +194,12 @@ func _process(delta: float) -> void:
 
 ## ── Public API ──────────────────────────────────────────────────────────
 
+func notify_gameplay_input_started() -> void:
+	_start_gameplay_standby()
+
+func prime_standby_only() -> void:
+	_start_gameplay_standby()
+
 func connect_agent() -> void:
 	if not gameplay_voice_enabled:
 		return
@@ -218,6 +229,18 @@ func disconnect_agent() -> void:
 	else:
 		_set_state_with_label(AgentState.OFFLINE, "OFFLINE")
 	EventBus.sudo_ai_overlay_dismissed.emit()
+
+func _start_gameplay_standby() -> void:
+	_sync_scene_tracking()
+	if not _is_current_scene_gameplay():
+		return
+	scene_voice_started = true
+	_ensure_runtime_bootstrapped()
+	if _can_enable_voice_for_current_scene():
+		if gameplay_voice_enabled:
+			_ensure_overlay_present()
+		else:
+			_enable_gameplay_voice()
 
 func start_listening() -> void:
 	if state != AgentState.CONNECTED and state != AgentState.LISTENING:
@@ -319,24 +342,9 @@ func get_output_volume() -> float:
 ## ── Scene / standby control ─────────────────────────────────────────────
 
 func _update_scene_gate() -> void:
-	var current_scene := get_tree().current_scene
-	var current_scene_path := ""
-	if current_scene != null:
-		current_scene_path = str(current_scene.scene_file_path)
+	var scene_changed := _sync_scene_tracking()
 
-	var scene_changed := current_scene_path != last_scene_path
-	if scene_changed:
-		last_scene_path = current_scene_path
-		last_routed_transcript = ""
-		if _is_gameplay_scene_path(current_scene_path):
-			activation_greeting_played_for_scene = false
-		else:
-			pending_scene_context = ""
-
-	var modal_open := false
-	if GameState != null and GameState.has_method("is_modal_open"):
-		modal_open = bool(GameState.is_modal_open())
-	var desired_enabled := _is_gameplay_scene_path(current_scene_path) and not get_tree().paused and not modal_open
+	var desired_enabled := scene_voice_started and _can_enable_voice_for_current_scene()
 
 	if scene_changed and desired_enabled and hot_word_active:
 		deactivate_hot_word()
@@ -350,6 +358,7 @@ func _update_scene_gate() -> void:
 		_ensure_overlay_present()
 
 func _enable_gameplay_voice() -> void:
+	_ensure_runtime_bootstrapped()
 	gameplay_voice_enabled = true
 	_ensure_overlay_present()
 	_request_bridge_health()
@@ -358,6 +367,10 @@ func _enable_gameplay_voice() -> void:
 
 func _disable_gameplay_voice() -> void:
 	gameplay_voice_enabled = false
+	if not runtime_bootstrapped:
+		_set_state_with_label(AgentState.OFFLINE, "OFFLINE")
+		EventBus.sudo_ai_overlay_dismissed.emit()
+		return
 	desired_wake_listener_enabled = false
 	if hot_word_active:
 		deactivate_hot_word()
@@ -367,6 +380,38 @@ func _disable_gameplay_voice() -> void:
 		_set_state_with_label(AgentState.OFFLINE, "OFFLINE")
 	_request_wake_listener(false)
 	EventBus.sudo_ai_overlay_dismissed.emit()
+
+func _is_current_scene_gameplay() -> bool:
+	var current_scene := get_tree().current_scene
+	if current_scene == null:
+		return false
+	return _is_gameplay_scene_path(str(current_scene.scene_file_path))
+
+func _can_enable_voice_for_current_scene() -> bool:
+	if not _is_current_scene_gameplay():
+		return false
+	if get_tree().paused:
+		return false
+	if GameState != null and GameState.has_method("is_modal_open") and bool(GameState.is_modal_open()):
+		return false
+	return true
+
+func _sync_scene_tracking() -> bool:
+	var current_scene := get_tree().current_scene
+	var current_scene_path := ""
+	if current_scene != null:
+		current_scene_path = str(current_scene.scene_file_path)
+	var scene_changed := current_scene_path != last_scene_path
+	if not scene_changed:
+		return false
+	last_scene_path = current_scene_path
+	last_routed_transcript = ""
+	scene_voice_started = false
+	if _is_gameplay_scene_path(current_scene_path):
+		activation_greeting_played_for_scene = false
+	else:
+		pending_scene_context = ""
+	return true
 
 func _is_gameplay_scene_path(scene_path: String) -> bool:
 	return bool(GAMEPLAY_SCENE_PATHS.get(scene_path, false))

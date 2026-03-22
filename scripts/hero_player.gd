@@ -123,6 +123,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var mouse_event := event as InputEventMouseMotion
+		if mouse_event.relative.length_squared() > 0.0:
+			_notify_sudo_gameplay_started()
 		rotate_y(-mouse_event.relative.x * mouse_sensitivity)
 		look_pitch = clampf(look_pitch - (mouse_event.relative.y * mouse_sensitivity), -deg_to_rad(80.0), deg_to_rad(80.0))
 		pitch_pivot.rotation.x = look_pitch
@@ -177,12 +179,15 @@ func _physics_process(delta: float) -> void:
 
 	var look_input := _get_look_input()
 	if look_input.length() > 0.001:
+		_notify_sudo_gameplay_started()
 		rotate_y(-look_input.x)
 		look_pitch = clampf(look_pitch - look_input.y, -deg_to_rad(80.0), deg_to_rad(80.0))
 		pitch_pivot.rotation.x = look_pitch
 
 	var input_dir := _get_move_input()
 	var input_strength := clampf(input_dir.length(), 0.0, 1.0)
+	if input_strength > 0.01:
+		_notify_sudo_gameplay_started()
 	var is_running := _wants_to_run(input_strength)
 	var current_speed := RUN_SPEED if is_running else WALK_SPEED
 	var direction := (transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
@@ -229,13 +234,26 @@ func request_scan() -> void:
 	if scene != null and scene.has_method("trigger_manual_scan"):
 		scene.call("trigger_manual_scan", self)
 
+func _notify_sudo_gameplay_started() -> void:
+	if not SudoAIAgent:
+		return
+	if get_tree().paused:
+		return
+	if GameState != null and GameState.has_method("is_modal_open") and bool(GameState.is_modal_open()):
+		return
+	if SudoAIAgent.gameplay_voice_enabled:
+		return
+	SudoAIAgent.notify_gameplay_input_started()
+
 func _toggle_sudo_ai_activation() -> void:
 	if not SudoAIAgent:
 		return
 	if SudoAIAgent.hot_word_active:
 		SudoAIAgent.deactivate_hot_word()
-	else:
+	elif SudoAIAgent.gameplay_voice_enabled:
 		SudoAIAgent.activate_hot_word()
+	else:
+		SudoAIAgent.prime_standby_only()
 
 func restore_oxygen(amount: float) -> void:
 	oxygen = clampf(oxygen + amount, 12.0, GameState.get_max_oxygen())
