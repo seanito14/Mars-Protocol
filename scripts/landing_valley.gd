@@ -70,6 +70,7 @@ const LIGHT_ROCK_POSITIONS := [
 var macro_noise: FastNoiseLite
 var detail_noise: FastNoiseLite
 var erosion_noise: FastNoiseLite
+var micro_noise: FastNoiseLite      # Fine pebble-scale displacement
 var terrain_min_height: float = 0.0
 var terrain_max_height: float = 0.0
 var clone_iteration_id: int = 14
@@ -121,31 +122,44 @@ func handle_voice_command(text: String) -> Dictionary:
 	return {"command_id": "unknown", "response_text": "Available valley commands are status, rover, and waypoint."}
 
 func _build_noise() -> void:
+	# Macro terrain shape — broad low-frequency hills
 	macro_noise = FastNoiseLite.new()
 	macro_noise.seed = 8207
 	macro_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	macro_noise.frequency = 0.0036
+	macro_noise.frequency = 0.0034
 	macro_noise.fractal_type = FastNoiseLite.FRACTAL_FBM
-	macro_noise.fractal_octaves = 4
-	macro_noise.fractal_gain = 0.52
-	macro_noise.fractal_lacunarity = 2.0
+	macro_noise.fractal_octaves = 5
+	macro_noise.fractal_gain = 0.50
+	macro_noise.fractal_lacunarity = 2.1
 
+	# Detail noise — mid-frequency surface roughness
 	detail_noise = FastNoiseLite.new()
 	detail_noise.seed = 4271 + posmod(clone_iteration_id, 23)
 	detail_noise.noise_type = FastNoiseLite.TYPE_PERLIN
-	detail_noise.frequency = 0.017
-	detail_noise.fractal_type = FastNoiseLite.FRACTAL_FBM
-	detail_noise.fractal_octaves = 3
-	detail_noise.fractal_gain = 0.44
+	detail_noise.frequency = 0.016
+	detail_noise.fractal_type = FastNoiseLite.FRACTAL_RIDGED
+	detail_noise.fractal_octaves = 4
+	detail_noise.fractal_gain = 0.46
 	detail_noise.fractal_lacunarity = 2.1
 
+	# Erosion noise — domain-warped fluvial channels
 	erosion_noise = FastNoiseLite.new()
 	erosion_noise.seed = 1931 + posmod(clone_iteration_id, 17)
 	erosion_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
-	erosion_noise.frequency = 0.009
+	erosion_noise.frequency = 0.0085
 	erosion_noise.fractal_type = FastNoiseLite.FRACTAL_FBM
-	erosion_noise.fractal_octaves = 2
-	erosion_noise.fractal_gain = 0.62
+	erosion_noise.fractal_octaves = 3
+	erosion_noise.fractal_gain = 0.58
+
+	# Micro noise — pebble-scale rock texture (very high frequency, tiny amplitude)
+	micro_noise = FastNoiseLite.new()
+	micro_noise.seed = 6317 + posmod(clone_iteration_id, 31)
+	micro_noise.noise_type = FastNoiseLite.TYPE_PERLIN
+	micro_noise.frequency = 0.11
+	micro_noise.fractal_type = FastNoiseLite.FRACTAL_FBM
+	micro_noise.fractal_octaves = 3
+	micro_noise.fractal_gain = 0.50
+	micro_noise.fractal_lacunarity = 2.3
 
 func _configure_landing_visuals() -> void:
 	# ── Apply shared visual profile (STRICT-COPY.jpg reference) ──────
@@ -322,11 +336,22 @@ func _make_terrain_seal_material() -> StandardMaterial3D:
 func _sample_height(x: float, z: float) -> float:
 	var clone_offset_x: float = (clone_variation - 0.5) * 38.0
 	var clone_offset_z: float = (clone_variation - 0.5) * -24.0
-	var macro_shape := macro_noise.get_noise_2d(x, z) * 7.8
-	var erosion_shape := erosion_noise.get_noise_2d((x * 0.72) + 18.0 + clone_offset_x, (z * 0.72) - 12.0 + clone_offset_z) * 4.8
-	var detail_shape := detail_noise.get_noise_2d((x * 1.5) - 30.0, (z * 1.5) + 11.0) * 1.9
-	var dune_a := sin((x * 0.013) - (z * 0.007) + 0.8) * 2.3
-	var dune_b := sin((x * 0.007) + (z * 0.015) - 1.1) * 1.5
+
+	# ── Domain warp for erosion — offset x,z by a low-freq field before sampling
+	var warp_x := erosion_noise.get_noise_2d(x * 0.006 + 3.7, z * 0.006 - 2.1) * 28.0
+	var warp_z := erosion_noise.get_noise_2d(x * 0.006 - 1.4, z * 0.006 + 4.8) * 28.0
+
+	var macro_shape  := macro_noise.get_noise_2d(x, z) * 8.2
+	var erosion_shape := erosion_noise.get_noise_2d(
+		(x + warp_x) * 0.72 + 18.0 + clone_offset_x,
+		(z + warp_z) * 0.72 - 12.0 + clone_offset_z) * 5.2
+	var detail_shape := detail_noise.get_noise_2d((x * 1.4) - 30.0, (z * 1.4) + 11.0) * 2.1
+
+	# Pebble/rock micro-displacement — very small but helps collision and looks
+	var micro_shape  := micro_noise.get_noise_2d(x, z) * 0.38
+
+	var dune_a := sin((x * 0.013) - (z * 0.007) + 0.8) * 2.4
+	var dune_b := sin((x * 0.007) + (z * 0.015) - 1.1) * 1.6
 
 	var corridor_progress := clampf((SPAWN_POSITION.z - z) / 620.0, 0.0, 1.0)
 	var corridor_center := lerpf(18.0, -8.0, corridor_progress)
@@ -349,8 +374,6 @@ func _sample_height(x: float, z: float) -> float:
 	var wreck_corridor := _gaussian_ellipse(x, z, Vector2(202.0, -138.0), Vector2(128.0, 74.0), deg_to_rad(-22.0)) * 7.8
 
 	# ── STRICT-COPY.jpg Landmark Mesas ────────────────────────────────
-	# Positioned to recreate the exact reference composition from spawn.
-
 	var landmark_height := 0.0
 	var proximity_mask := 0.0
 	for m in MESA_PROFILES:
@@ -358,35 +381,44 @@ func _sample_height(x: float, z: float) -> float:
 		landmark_height = maxf(landmark_height, mh_data.height)
 		proximity_mask = maxf(proximity_mask, mh_data.proximity)
 
+	# ── Fluvial erosion gullies on slopes ─────────────────────────────
+	# Carve narrow channels into cliff flanks using domain-warped ridged noise
+	var gully_mask := clampf(proximity_mask * 2.4 - 0.6, 0.0, 1.0)
+	var gully_noise := erosion_noise.get_noise_2d(
+		(x + warp_x * 0.5) * 1.8 + 9.2,
+		(z + warp_z * 0.5) * 1.8 - 7.4)
+	var gully_depth := (1.0 - absf(gully_noise)) * gully_mask * 3.2
+
 	var half_size := TERRAIN_SIZE * 0.5
 	var edge_distance := maxf(absf(x), absf(z))
 	var edge_rim := _smoothstep(half_size - 180.0, half_size - 30.0, edge_distance)
 	var edge_raise := edge_rim * edge_rim * 110.0
 
-	var base_h := BASE_HEIGHT + macro_shape + erosion_shape + detail_shape + _gaussian_ellipse(x, z, Vector2(0, 0), Vector2(300, 300), 0.0) * 8.0
+	var base_h := BASE_HEIGHT + macro_shape + erosion_shape + detail_shape + micro_shape \
+		+ _gaussian_ellipse(x, z, Vector2(0, 0), Vector2(300, 300), 0.0) * 8.0
 	var final_h := maxf(base_h, landmark_height)
-	
+
 	# Wind-Shadow Dunes
 	var shadow_dune_f := 0.016
-	var shadow_dune_freq := 1.8 + detail_noise.get_noise_2d(x * 0.008, z * 0.008) * 0.6
+	var shadow_dune_freq := 1.8 + micro_noise.get_noise_2d(x * 0.008, z * 0.008) * 0.5
 	var dune_bleed := macro_noise.get_noise_2d(x * shadow_dune_f, z * shadow_dune_f)
 	var total_dunes := (dune_a + dune_b + foreground_dune + right_berm + left_shelf + saddle_dune) * (dune_bleed + 0.5)
-	
+
 	var dune_mask := clampf(1.0 - proximity_mask * 1.5, 0.0, 1.0)
 	final_h += total_dunes * shadow_dune_freq * dune_mask
-	
-	# Add basecamp and other regions
+
+	# Basecamp and other regions
 	final_h += basecamp_pad + edge_raise
 	final_h -= corridor_carve + foreground_lane + basin_region + hero_demo_basin + wreck_corridor
-	
-	# Add micro-noise
-	final_h += detail_noise.get_noise_2d(x * 0.12, z * 0.12) * 0.22
-	
-	# Spawn stabilization
+
+	# Gully carving on cliff flanks (only affects elevated areas near mesas)
+	final_h -= gully_depth
+
+	# Spawn stabilization — flatten around the player start point
 	var dist_to_spawn := Vector2(x - SPAWN_POSITION.x, z - SPAWN_POSITION.z).length()
 	if dist_to_spawn < 128.0:
 		var weight := 1.0 - _smoothstep(64.0, 128.0, dist_to_spawn)
-		final_h = lerpf(final_h, SPAWN_POSITION.y + detail_noise.get_noise_2d(x * 0.2, z * 0.2) * 0.1, weight)
+		final_h = lerpf(final_h, SPAWN_POSITION.y + micro_noise.get_noise_2d(x * 0.2, z * 0.2) * 0.06, weight)
 
 	return final_h
 
