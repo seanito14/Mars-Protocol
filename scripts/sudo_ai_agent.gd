@@ -58,6 +58,7 @@ var last_routed_transcript: String = ""
 var gameplay_voice_enabled: bool = false
 var runtime_bootstrapped: bool = false
 var scene_voice_started: bool = false
+var scene_auto_activation_pending: bool = false
 var bridge_launch_pid: int = -1
 var bridge_base_url: String = BRIDGE_BASE_URL
 var bridge_available: bool = false
@@ -269,6 +270,7 @@ func activate_hot_word() -> void:
 		return
 	if hot_word_active:
 		return
+	scene_auto_activation_pending = false
 	hot_word_active = true
 	EventBus.sudo_ai_hot_word_activated.emit()
 	_request_wake_listener(false)
@@ -344,7 +346,7 @@ func get_output_volume() -> float:
 func _update_scene_gate() -> void:
 	var scene_changed := _sync_scene_tracking()
 
-	var desired_enabled := scene_voice_started and _can_enable_voice_for_current_scene()
+	var desired_enabled := _can_enable_voice_for_current_scene()
 
 	if scene_changed and desired_enabled and hot_word_active:
 		deactivate_hot_word()
@@ -364,6 +366,7 @@ func _enable_gameplay_voice() -> void:
 	_request_bridge_health()
 	_request_wake_listener(true)
 	_emit_bridge_standby_state()
+	_maybe_auto_activate_scene_intro()
 
 func _disable_gameplay_voice() -> void:
 	gameplay_voice_enabled = false
@@ -406,12 +409,31 @@ func _sync_scene_tracking() -> bool:
 		return false
 	last_scene_path = current_scene_path
 	last_routed_transcript = ""
-	scene_voice_started = false
 	if _is_gameplay_scene_path(current_scene_path):
+		scene_voice_started = true
+		scene_auto_activation_pending = true
 		activation_greeting_played_for_scene = false
 	else:
+		scene_voice_started = false
+		scene_auto_activation_pending = false
 		pending_scene_context = ""
 	return true
+
+func _maybe_auto_activate_scene_intro() -> void:
+	if not scene_auto_activation_pending:
+		return
+	if not gameplay_voice_enabled:
+		return
+	if hot_word_active or activation_greeting_in_progress or activation_greeting_played_for_scene:
+		scene_auto_activation_pending = false
+		return
+	if bridge_available and bridge_auth_available:
+		scene_auto_activation_pending = false
+		activate_hot_word()
+		return
+	if bridge_available and not bridge_auth_available:
+		scene_auto_activation_pending = false
+		_speak_activation_greeting()
 
 func _is_gameplay_scene_path(scene_path: String) -> bool:
 	return bool(GAMEPLAY_SCENE_PATHS.get(scene_path, false))
@@ -564,6 +586,7 @@ func _on_bridge_health_request_completed(result: int, response_code: int, _heade
 
 	if gameplay_voice_enabled and not hot_word_active:
 		_emit_bridge_standby_state()
+	_maybe_auto_activate_scene_intro()
 
 func _on_bridge_signed_url_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
@@ -600,6 +623,7 @@ func _on_bridge_wake_request_completed(_result: int, response_code: int, _header
 	bridge_wake_reason = str(payload.get("wake_reason", bridge_wake_reason))
 	if gameplay_voice_enabled and not hot_word_active:
 		_emit_bridge_standby_state()
+	_maybe_auto_activate_scene_intro()
 
 ## ── Internal conversation flow ──────────────────────────────────────────
 
@@ -858,8 +882,13 @@ func _finish_activation_greeting(start_listening_after: bool) -> void:
 	EventBus.sudo_ai_speech_finished.emit()
 	if start_listening_after and listen_after_activation_greeting and hot_word_active:
 		start_listening()
-	else:
+	elif hot_word_active:
 		_set_state(AgentState.CONNECTED)
+	else:
+		if gameplay_voice_enabled:
+			_emit_bridge_standby_state()
+		else:
+			_set_state(AgentState.CONNECTED)
 	listen_after_activation_greeting = false
 
 func _enter_timeout_standby() -> void:
