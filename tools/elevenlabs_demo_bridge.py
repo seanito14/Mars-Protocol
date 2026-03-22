@@ -104,6 +104,8 @@ class WakeDetector:
         self.enabled = WAKE_ENABLED
         self.running = False
         self.last_error = ""
+        self.last_detected_at_ms = 0
+        self.last_detected_word = ""
         self.thread: threading.Thread | None = None
         self.stop_event = threading.Event()
         self.queue: queue.Queue[bytes] = queue.Queue()
@@ -134,6 +136,8 @@ class WakeDetector:
             "wake_reason": reason,
             "wake_udp_host": WAKE_UDP_HOST,
             "wake_udp_port": WAKE_UDP_PORT,
+            "wake_last_detected_at_ms": self.last_detected_at_ms,
+            "wake_last_detected_word": self.last_detected_word,
         }
 
     def start(self) -> dict:
@@ -203,6 +207,8 @@ class WakeDetector:
                             now = time.monotonic()
                             if now - self.last_detection_at >= WAKE_COOLDOWN_SECONDS:
                                 self.last_detection_at = now
+                                self.last_detected_at_ms = int(time.time() * 1000.0)
+                                self.last_detected_word = "sudo"
                                 self._emit_udp({"type": "wake_detected", "word": "sudo"})
                     else:
                         partial = json.loads(recognizer.PartialResult()).get("partial", "")
@@ -210,6 +216,8 @@ class WakeDetector:
                             now = time.monotonic()
                             if now - self.last_detection_at >= WAKE_COOLDOWN_SECONDS:
                                 self.last_detection_at = now
+                                self.last_detected_at_ms = int(time.time() * 1000.0)
+                                self.last_detected_word = "sudo"
                                 self._emit_udp({"type": "wake_detected", "word": "sudo"})
         except Exception as exc:  # noqa: BLE001
             self.last_error = str(exc)

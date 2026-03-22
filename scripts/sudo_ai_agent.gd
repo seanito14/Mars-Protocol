@@ -15,14 +15,17 @@ const IOS_BRIDGE_BASE_URL_SETTING: String = "sudo_ai/ios_bridge_base_url"
 const DEFAULT_IOS_BRIDGE_BASE_URL: String = "http://zs-Mac-mini.local:8765"
 const BRIDGE_SCRIPT_PATH: String = "res://tools/sudo_ai_companion_launcher.py"
 const IOS_AUDIO_SESSION_COMMAND_PATH: String = "user://ios_audio_session_command.json"
-const BRIDGE_HEALTH_POLL_INTERVAL: float = 3.0
+const BRIDGE_HEALTH_POLL_INTERVAL: float = 1.5
 const BRIDGE_WAKE_EVENT_PORT: int = 4245
-const RECONNECT_DELAY: float = 3.0
+const RECONNECT_DELAY: float = 1.5
+const ALWAYS_LISTEN_IN_GAMEPLAY: bool = true
 const ACTIVATION_GREETING_PROMPT: String = "Give your brief startup greeting to the commander, then wait for their request."
 const MAX_MIC_FRAMES_PER_PACKET: int = 1600
 const MIC_SEND_INTERVAL: float = 0.1
 const SILENCE_TIMEOUT_SECONDS: float = 4.5
 const SPEECH_ACTIVITY_VOLUME_THRESHOLD: float = 0.014
+const AGENT_AUDIO_FALLBACK_TIMEOUT: float = 1.2
+const IOS_MASTER_VOLUME_RECOVERY_INTERVAL: float = 1.0
 const GAMEPLAY_SCENE_PATHS := {
 	"res://scenes/hero_demo.tscn": true,
 	"res://scenes/landing_valley.tscn": true,
@@ -49,6 +52,7 @@ var reconnect_timer: float = -1.0
 var should_reconnect: bool = false
 var hot_word_active: bool = false
 var agent_output_audio_format: String = "pcm_16000"
+var user_input_audio_format: String = "pcm_16000"
 var listen_after_activation_greeting: bool = false
 var activation_greeting_in_progress: bool = false
 var activation_greeting_played_for_scene: bool = false
@@ -68,6 +72,8 @@ var bridge_tts_available: bool = false
 var bridge_wake_supported: bool = false
 var bridge_wake_listening: bool = false
 var bridge_wake_reason: String = ""
+var bridge_last_wake_detected_at_ms: int = 0
+var bridge_last_wake_detected_word: String = ""
 var bridge_secret_import_ready: bool = false
 var bridge_runtime_env_ready: bool = false
 var bridge_dependency_install_ready: bool = false
@@ -77,6 +83,7 @@ var bridge_health_poll_timer: float = 0.0
 var desired_wake_listener_enabled: bool = false
 var silence_timer: float = SILENCE_TIMEOUT_SECONDS
 var ios_audio_session_mode: String = ""
+var pending_agent_audio_timeout: float = -1.0
 
 ## Audio playback
 var audio_player: AudioStreamPlayer = null
@@ -99,10 +106,14 @@ var wake_peers: Array[PacketPeerUDP] = []
 var bridge_health_request: HTTPRequest = null
 var bridge_signed_url_request: HTTPRequest = null
 var bridge_wake_request: HTTPRequest = null
+var bridge_tts_fallback_request: HTTPRequest = null
+var pending_agent_fallback_text: String = ""
+var ios_master_volume_recovery_timer: float = 0.0
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	bridge_base_url = _resolve_bridge_base_url()
+	_ensure_ios_master_output_level()
 
 	audio_player = AudioStreamPlayer.new()
 	audio_player.bus = "Master"
@@ -112,21 +123,45 @@ func _ready() -> void:
 	bridge_health_request = HTTPRequest.new()
 	bridge_signed_url_request = HTTPRequest.new()
 	bridge_wake_request = HTTPRequest.new()
+	bridge_tts_fallback_request = HTTPRequest.new()
 	add_child(bridge_health_request)
 	add_child(bridge_signed_url_request)
 	add_child(bridge_wake_request)
+	add_child(bridge_tts_fallback_request)
 
 	bridge_health_request.request_completed.connect(_on_bridge_health_request_completed)
 	bridge_signed_url_request.request_completed.connect(_on_bridge_signed_url_request_completed)
 	bridge_wake_request.request_completed.connect(_on_bridge_wake_request_completed)
+	bridge_tts_fallback_request.request_completed.connect(_on_bridge_tts_fallback_request_completed)
 	_sync_ios_audio_session_mode()
+
+func _ensure_ios_master_output_level() -> void:
+	if OS.get_name() != "iOS":
+		return
+	var master_bus := AudioServer.get_bus_index("Master")
+	if master_bus < 0:
+		return
+	if AudioServer.is_bus_mute(master_bus):
+		AudioServer.set_bus_mute(master_bus, false)
+	var volume_db := AudioServer.get_bus_volume_db(master_bus)
+	if volume_db <= -40.0:
+		AudioServer.set_bus_volume_db(master_bus, linear_to_db(0.85))
+
+func _tick_ios_master_output_recovery(delta: float) -> void:
+	if OS.get_name() != "iOS":
+		return
+	ios_master_volume_recovery_timer -= delta
+	if ios_master_volume_recovery_timer > 0.0:
+		return
+	ios_master_volume_recovery_timer = IOS_MASTER_VOLUME_RECOVERY_INTERVAL
+	_ensure_ios_master_output_level()
 
 func _ensure_runtime_bootstrapped() -> void:
 	if runtime_bootstrapped:
 		return
 	runtime_bootstrapped = true
 	_setup_microphone()
-	if _should_request_wake_listener():
+	if _should_use_udp_wake_events():
 		_setup_wake_udp_listener()
 	_request_bridge_health()
 	print("SudoAI: Agent service ready. Gameplay scenes will listen for 'sudo' in standby.")
@@ -157,9 +192,11 @@ func _setup_wake_udp_listener() -> void:
 		push_warning("SudoAI: Failed to listen for wake events on UDP port %d." % BRIDGE_WAKE_EVENT_PORT)
 
 func _process(delta: float) -> void:
+	_tick_ios_master_output_recovery(delta)
 	_update_scene_gate()
 	if runtime_bootstrapped:
-		_poll_wake_events()
+		if _should_use_udp_wake_events():
+			_poll_wake_events()
 		_poll_bridge_health(delta)
 		_maybe_auto_activate_scene_intro()
 	_update_volume_levels()
@@ -171,10 +208,15 @@ func _process(delta: float) -> void:
 			if should_reconnect and gameplay_voice_enabled and hot_word_active:
 				connect_agent()
 
-	if hot_word_active and gameplay_voice_enabled and state == AgentState.LISTENING and not is_speaking and not activation_greeting_in_progress:
+	if hot_word_active and gameplay_voice_enabled and state == AgentState.LISTENING and not is_speaking and not activation_greeting_in_progress and not _should_keep_agent_live():
 		silence_timer -= delta
 		if silence_timer <= 0.0:
 			_enter_timeout_standby()
+
+	if pending_agent_audio_timeout >= 0.0:
+		pending_agent_audio_timeout -= delta
+		if pending_agent_audio_timeout <= 0.0:
+			_handle_missing_agent_audio()
 
 	if state == AgentState.OFFLINE or state == AgentState.ERROR or state == AgentState.STANDBY or state == AgentState.TIMEOUT:
 		return
@@ -226,6 +268,7 @@ func disconnect_agent() -> void:
 	_close_socket_quietly("manual_disconnect")
 	_stop_mic()
 	hot_word_active = false
+	pending_agent_fallback_text = ""
 	listen_after_activation_greeting = false
 	activation_greeting_in_progress = false
 	is_speaking = false
@@ -282,7 +325,7 @@ func activate_hot_word() -> void:
 	scene_auto_activation_pending = false
 	hot_word_active = true
 	EventBus.sudo_ai_hot_word_activated.emit()
-	if _should_request_wake_listener():
+	if _should_request_wake_listener() and not _should_keep_agent_live():
 		_request_wake_listener(false)
 	if state == AgentState.CONNECTED:
 		_begin_active_session()
@@ -292,6 +335,7 @@ func activate_hot_word() -> void:
 func deactivate_hot_word() -> void:
 	hot_word_active = false
 	listen_after_activation_greeting = false
+	pending_agent_fallback_text = ""
 	_stop_mic()
 	activation_greeting_in_progress = false
 	if audio_player and audio_player.playing:
@@ -439,13 +483,12 @@ func _maybe_auto_activate_scene_intro() -> void:
 		return
 	if hot_word_active or activation_greeting_in_progress:
 		return
-	if activation_greeting_played_for_scene:
-		scene_auto_activation_pending = false
+	if not bridge_available or not bridge_auth_available:
 		return
-	if bridge_available:
-		scene_auto_activation_pending = false
-		activate_hot_word()
+	if not scene_auto_activation_pending and not _should_keep_agent_live():
 		return
+	scene_auto_activation_pending = false
+	activate_hot_word()
 
 func _is_gameplay_scene_path(scene_path: String) -> bool:
 	return bool(GAMEPLAY_SCENE_PATHS.get(scene_path, false))
@@ -480,7 +523,10 @@ func _emit_bridge_standby_state() -> void:
 		_set_state_with_label(AgentState.ERROR, "SUDO AUTH REQUIRED")
 		return
 	if _uses_remote_bridge():
-		_set_state_with_label(AgentState.STANDBY, "TAP SUDO TO TALK")
+		if _should_keep_agent_live():
+			_set_state_with_label(AgentState.STANDBY, "RECONNECTING SUDO AI")
+		else:
+			_set_state_with_label(AgentState.STANDBY, "TAP SUDO TO TALK")
 		return
 	if bridge_wake_supported:
 		if bridge_wake_listening:
@@ -618,11 +664,23 @@ func _on_bridge_health_request_completed(result: int, response_code: int, _heade
 	bridge_wake_supported = bool(payload.get("wake_supported", false))
 	bridge_wake_listening = bool(payload.get("wake_listening", false))
 	bridge_wake_reason = str(payload.get("wake_reason", ""))
+	var wake_detected_at_ms := _variant_to_int(
+		payload.get("wake_last_detected_at_ms", bridge_last_wake_detected_at_ms),
+		bridge_last_wake_detected_at_ms
+	)
+	var wake_detected_word := str(payload.get("wake_last_detected_word", bridge_last_wake_detected_word))
+	var wake_detection_changed := wake_detected_at_ms > 0 and wake_detected_at_ms != bridge_last_wake_detected_at_ms
+	bridge_last_wake_detected_at_ms = wake_detected_at_ms
+	bridge_last_wake_detected_word = wake_detected_word
 	bridge_secret_import_ready = bool(payload.get("secret_import_ready", false))
 	bridge_runtime_env_ready = bool(payload.get("runtime_env_ready", false))
 	bridge_dependency_install_ready = bool(payload.get("dependency_install_ready", false))
 	bridge_setup_error = str(payload.get("setup_error", ""))
 	_report_bridge_setup_status()
+
+	if wake_detection_changed and gameplay_voice_enabled and not hot_word_active and not is_speaking and not activation_greeting_in_progress:
+		EventBus.push_mission_log("[SUDO AI] Wake word detected.")
+		activate_hot_word()
 
 	if gameplay_voice_enabled and desired_wake_listener_enabled and bridge_wake_supported and not bridge_wake_listening and not hot_word_active:
 		_request_wake_listener(true)
@@ -648,6 +706,7 @@ func _on_bridge_signed_url_request_completed(result: int, response_code: int, _h
 		return
 
 	socket = WebSocketPeer.new()
+	pending_agent_audio_timeout = -1.0
 	var err := socket.connect_to_url(signed_url)
 	if err != OK:
 		_handle_activation_failure("socket_connect_failed")
@@ -667,6 +726,35 @@ func _on_bridge_wake_request_completed(_result: int, response_code: int, _header
 	if gameplay_voice_enabled and not hot_word_active:
 		_emit_bridge_standby_state()
 	_maybe_auto_activate_scene_intro()
+
+func _on_bridge_tts_fallback_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	var has_pending_fallback := not pending_agent_fallback_text.is_empty()
+	if not has_pending_fallback:
+		return
+	pending_agent_fallback_text = ""
+	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
+		_resume_after_missing_audio()
+		return
+	var parsed: Variant = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(parsed) != TYPE_DICTIONARY:
+		_resume_after_missing_audio()
+		return
+	var payload := parsed as Dictionary
+	var audio_base64 := str(payload.get("audio_base64", ""))
+	var used_tts := bool(payload.get("used_tts", false))
+	if not used_tts or audio_base64.is_empty():
+		_resume_after_missing_audio()
+		return
+	var audio_bytes := Marshalls.base64_to_raw(audio_base64)
+	if audio_bytes.is_empty():
+		_resume_after_missing_audio()
+		return
+	var stream := AudioStreamMP3.new()
+	stream.data = audio_bytes
+	audio_player.stream = stream
+	audio_player.play()
+	is_speaking = true
+	_set_state(AgentState.SPEAKING)
 
 func _report_bridge_setup_status() -> void:
 	var status_key := "%s|%s|%s|%s|%s|%s|%s" % [
@@ -760,6 +848,7 @@ func _handle_message(data: Dictionary) -> void:
 			var event: Dictionary = data.get("conversation_initiation_metadata_event", {})
 			conversation_id = str(event.get("conversation_id", ""))
 			agent_output_audio_format = str(event.get("agent_output_audio_format", agent_output_audio_format)).to_lower()
+			user_input_audio_format = str(event.get("user_input_audio_format", user_input_audio_format)).to_lower()
 			EventBus.push_mission_log("[SUDO AI] Conversation initiated.")
 
 		"vad_score":
@@ -785,7 +874,9 @@ func _handle_message(data: Dictionary) -> void:
 			if response.is_empty():
 				return
 			is_speaking = true
+			pending_agent_fallback_text = response
 			_set_state(AgentState.SPEAKING)
+			pending_agent_audio_timeout = AGENT_AUDIO_FALLBACK_TIMEOUT
 			EventBus.sudo_ai_agent_response.emit(response)
 			EventBus.agent_response_received.emit(response)
 			EventBus.push_mission_log("> SudoAI: %s" % response)
@@ -795,6 +886,8 @@ func _handle_message(data: Dictionary) -> void:
 			var audio_b64: String = str(event.get("audio_base_64", ""))
 			if audio_b64.is_empty():
 				return
+			pending_agent_fallback_text = ""
+			pending_agent_audio_timeout = -1.0
 			var chunk := Marshalls.base64_to_raw(audio_b64)
 			pending_audio_chunks.append(chunk)
 			_try_play_audio()
@@ -809,6 +902,7 @@ func _handle_message(data: Dictionary) -> void:
 			audio_player.stop()
 			pending_audio_chunks.clear()
 			audio_buffer.clear()
+			pending_agent_fallback_text = ""
 			is_speaking = false
 			if hot_word_active and mic_active:
 				silence_timer = SILENCE_TIMEOUT_SECONDS
@@ -848,6 +942,7 @@ func _try_play_audio() -> void:
 		return
 	if pending_audio_chunks.is_empty():
 		return
+	pending_agent_audio_timeout = -1.0
 	var combined := PackedByteArray()
 	for chunk in pending_audio_chunks:
 		combined.append_array(chunk)
@@ -867,6 +962,7 @@ func _on_audio_finished() -> void:
 		return
 
 	is_speaking = false
+	pending_agent_audio_timeout = -1.0
 	EventBus.sudo_ai_speech_finished.emit()
 	if activation_greeting_in_progress:
 		_finish_activation_greeting(true)
@@ -904,17 +1000,24 @@ func _send_mic_audio() -> void:
 	if frames_available == 0:
 		return
 	var stereo_frames := mic_effect.get_buffer(mini(frames_available, MAX_MIC_FRAMES_PER_PACKET))
-	var pcm := PackedByteArray()
-	pcm.resize(stereo_frames.size() * 2)
+	var mono_samples := PackedFloat32Array()
+	mono_samples.resize(stereo_frames.size())
 	var rms_sum: float = 0.0
 	for i in range(stereo_frames.size()):
 		var mono_sample: float = (stereo_frames[i].x + stereo_frames[i].y) * 0.5
+		mono_samples[i] = mono_sample
 		rms_sum += mono_sample * mono_sample
-		var sample_int: int = clampi(int(mono_sample * 32767.0), -32768, 32767)
-		pcm.encode_s16(i * 2, sample_int)
 	current_input_volume = sqrt(rms_sum / max(float(stereo_frames.size()), 1.0))
 	if current_input_volume > SPEECH_ACTIVITY_VOLUME_THRESHOLD:
 		silence_timer = SILENCE_TIMEOUT_SECONDS
+	var mix_rate := AudioServer.get_mix_rate()
+	var target_rate := _extract_pcm_sample_rate(user_input_audio_format)
+	var resampled := _resample_mono_samples(mono_samples, mix_rate, target_rate)
+	var pcm := PackedByteArray()
+	pcm.resize(resampled.size() * 2)
+	for i in range(resampled.size()):
+		var sample_int: int = clampi(int(resampled[i] * 32767.0), -32768, 32767)
+		pcm.encode_s16(i * 2, sample_int)
 	var b64 := Marshalls.raw_to_base64(pcm)
 	if socket.get_ready_state() == WebSocketPeer.STATE_OPEN:
 		var payload := JSON.stringify({"user_audio_chunk": b64})
@@ -940,6 +1043,7 @@ func _speak_activation_greeting() -> void:
 	activation_greeting_in_progress = true
 	activation_greeting_played_for_scene = true
 	is_speaking = true
+	pending_agent_audio_timeout = AGENT_AUDIO_FALLBACK_TIMEOUT
 	listen_after_activation_greeting = true
 	_set_state(AgentState.GREETING)
 	_send_user_message(ACTIVATION_GREETING_PROMPT, false)
@@ -949,6 +1053,7 @@ func _finish_activation_greeting(start_listening_after: bool) -> void:
 		return
 	activation_greeting_in_progress = false
 	is_speaking = false
+	pending_agent_audio_timeout = -1.0
 	EventBus.sudo_ai_speech_finished.emit()
 	if start_listening_after and listen_after_activation_greeting and hot_word_active:
 		start_listening()
@@ -962,6 +1067,9 @@ func _finish_activation_greeting(start_listening_after: bool) -> void:
 	listen_after_activation_greeting = false
 
 func _enter_timeout_standby() -> void:
+	if _should_keep_agent_live():
+		silence_timer = SILENCE_TIMEOUT_SECONDS
+		return
 	EventBus.push_mission_log("[SUDO AI] Returning to standby after silence timeout.")
 	EventBus.conversation_disconnected.emit("timeout")
 	_set_state(AgentState.TIMEOUT)
@@ -975,8 +1083,10 @@ func _handle_activation_failure(reason: String) -> void:
 		_report_bridge_setup_status()
 	hot_word_active = false
 	should_reconnect = false
+	pending_agent_fallback_text = ""
 	_stop_mic()
 	_close_socket_quietly(reason)
+	pending_agent_audio_timeout = -1.0
 	if _should_request_wake_listener():
 		_request_wake_listener(true)
 	EventBus.sudo_ai_overlay_dismissed.emit()
@@ -988,8 +1098,10 @@ func _handle_activation_failure(reason: String) -> void:
 func _handle_socket_closed(reason: String) -> void:
 	_stop_mic()
 	is_speaking = false
+	pending_agent_fallback_text = ""
 	activation_greeting_in_progress = false
 	listen_after_activation_greeting = false
+	pending_agent_audio_timeout = -1.0
 	pending_audio_chunks.clear()
 	audio_buffer.clear()
 	EventBus.sudo_ai_disconnected.emit(reason)
@@ -1036,11 +1148,78 @@ func _build_audio_stream(audio_bytes: PackedByteArray) -> AudioStream:
 		return mp3_stream
 	return null
 
+func _resample_mono_samples(samples: PackedFloat32Array, from_rate: int, to_rate: int) -> PackedFloat32Array:
+	if samples.is_empty():
+		return samples
+	if from_rate <= 0 or to_rate <= 0 or from_rate == to_rate:
+		return samples
+	var output_size := maxi(int(round(float(samples.size()) * float(to_rate) / float(from_rate))), 1)
+	var output := PackedFloat32Array()
+	output.resize(output_size)
+	var ratio := float(from_rate) / float(to_rate)
+	for i in range(output_size):
+		var source_position := float(i) * ratio
+		var base_index := mini(int(floor(source_position)), samples.size() - 1)
+		var next_index := mini(base_index + 1, samples.size() - 1)
+		var weight := source_position - float(base_index)
+		output[i] = lerpf(samples[base_index], samples[next_index], weight)
+	return output
+
 func _extract_pcm_sample_rate(format_name: String) -> int:
 	var parts := format_name.split("_", false)
 	if parts.size() < 2:
 		return 16000
 	return maxi(parts[1].to_int(), 8000)
+
+func _handle_missing_agent_audio() -> void:
+	pending_agent_audio_timeout = -1.0
+	if _can_request_bridge_tts_fallback():
+		_request_bridge_tts_fallback(pending_agent_fallback_text)
+		return
+	pending_agent_fallback_text = ""
+	_resume_after_missing_audio()
+
+func _can_request_bridge_tts_fallback() -> bool:
+	if pending_agent_fallback_text.is_empty():
+		return false
+	if not bridge_available or not bridge_tts_available:
+		return false
+	if bridge_tts_fallback_request == null:
+		return false
+	return bridge_tts_fallback_request.get_http_client_status() == HTTPClient.STATUS_DISCONNECTED
+
+func _request_bridge_tts_fallback(text: String) -> void:
+	if bridge_tts_fallback_request == null:
+		return
+	var payload := JSON.stringify({
+		"user_text": "",
+		"assistant_text": text,
+		"command_id": "sudo_ai_fallback",
+		"context": "fallback_agent_audio",
+	})
+	var err := bridge_tts_fallback_request.request(
+		"%s/command" % bridge_base_url,
+		PackedStringArray(["Content-Type: application/json"]),
+		HTTPClient.METHOD_POST,
+		payload
+	)
+	if err != OK:
+		pending_agent_fallback_text = ""
+		_resume_after_missing_audio()
+
+func _resume_after_missing_audio() -> void:
+	if not hot_word_active or not gameplay_voice_enabled:
+		is_speaking = false
+		return
+	is_speaking = false
+	if activation_greeting_in_progress:
+		_finish_activation_greeting(true)
+		return
+	if mic_active:
+		silence_timer = SILENCE_TIMEOUT_SECONDS
+		_set_state(AgentState.LISTENING)
+	else:
+		_set_state(AgentState.CONNECTED)
 
 func _variant_to_int(value: Variant, default_value: int) -> int:
 	match typeof(value):
@@ -1084,6 +1263,8 @@ func _sync_ios_audio_session_mode() -> void:
 	}))
 
 func _get_ios_audio_session_mode() -> String:
+	if gameplay_voice_enabled and _is_current_scene_gameplay():
+		return "voice"
 	if hot_word_active or mic_active or activation_greeting_in_progress:
 		return "voice"
 	match state:
@@ -1095,8 +1276,14 @@ func _get_ios_audio_session_mode() -> String:
 func _uses_remote_bridge() -> bool:
 	return OS.get_name() == "iOS"
 
-func _should_request_wake_listener() -> bool:
+func _should_keep_agent_live() -> bool:
+	return ALWAYS_LISTEN_IN_GAMEPLAY and gameplay_voice_enabled and _is_current_scene_gameplay()
+
+func _should_use_udp_wake_events() -> bool:
 	return not _uses_remote_bridge()
+
+func _should_request_wake_listener() -> bool:
+	return true
 
 func _resolve_bridge_base_url() -> String:
 	if not _uses_remote_bridge():

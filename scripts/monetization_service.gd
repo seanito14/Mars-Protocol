@@ -46,6 +46,11 @@ func _process(delta: float) -> void:
 
 func show_paywall(context: String = "") -> void:
 	if _uses_ios_revenuecat():
+		_poll_ios_bridge_state()
+		if not ios_last_setup_error.is_empty():
+			GameState.close_paywall()
+			EventBus.push_mission_log(_describe_ios_setup_error(ios_last_setup_error))
+			return
 		GameState.open_paywall(context)
 		EventBus.paywall_requested.emit(context)
 		EventBus.push_mission_log("Opening premium uplink...")
@@ -79,6 +84,11 @@ func purchase_tier(tier_id: String) -> bool:
 
 func restore_purchases() -> bool:
 	if _uses_ios_revenuecat():
+		_poll_ios_bridge_state()
+		if not ios_last_setup_error.is_empty():
+			GameState.close_paywall()
+			EventBus.push_mission_log(_describe_ios_setup_error(ios_last_setup_error))
+			return false
 		GameState.open_paywall("restore")
 		EventBus.push_mission_log("Checking premium uplink restores...")
 		_queue_ios_bridge_command("restore_purchases", "restore")

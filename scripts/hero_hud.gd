@@ -751,7 +751,7 @@ func _should_show_touch_controls() -> bool:
 	return OS.get_name() == "iOS" or OS.has_feature("mobile")
 
 func _should_show_upgrade_button() -> bool:
-	return OS.get_name() == "iOS"
+	return _should_show_touch_controls()
 
 func _on_sudo_touch_button_pressed() -> void:
 	if SudoAIAgent == null:

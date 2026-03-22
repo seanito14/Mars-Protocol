@@ -230,9 +230,13 @@ func request_interaction() -> void:
 		_update_interaction_focus()
 
 func request_scan() -> void:
-	var scene := get_tree().current_scene
-	if scene != null and scene.has_method("trigger_manual_scan"):
-		scene.call("trigger_manual_scan", self)
+	if GameState.has_entitlement("pro"):
+		var scene := get_tree().current_scene
+		if scene != null and scene.has_method("trigger_manual_scan"):
+			scene.call("trigger_manual_scan", self)
+	else:
+		VoiceAlertService.speak("telemetry_tease", "Scanning for high-tier debris...")
+		MonetizationService.purchase_tier("pro")
 
 func _notify_sudo_gameplay_started() -> void:
 	if not SudoAIAgent:
