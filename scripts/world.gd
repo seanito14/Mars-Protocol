@@ -6,6 +6,7 @@ const ROCK_SCENE := preload("res://scenes/rock.tscn")
 const DRONE_SCENE := preload("res://scenes/drone.tscn")
 const DEBRIS_SCENE := preload("res://scenes/debris_cube.tscn")
 const BASECAMP_TERMINAL_SCENE := preload("res://scenes/basecamp_terminal.tscn")
+const TERRAIN_VISUAL_DATA := preload("res://scripts/terrain_visual_data.gd")
 const ROCK_LAYOUTS := [
 	Vector3(22.0, 0.0, 10.0),
 	Vector3(-26.0, 0.0, 6.0),
@@ -42,6 +43,7 @@ var terrain_height_scale: float = 85.0
 
 func _ready() -> void:
 	_cache_terrain_settings()
+	_configure_terrain_visuals()
 	_configure_navigation_mesh()
 	_build_playable_terrain()
 	_position_core_actors()
@@ -67,6 +69,12 @@ func _cache_terrain_settings() -> void:
 		terrain_noise.fractal_type = FastNoiseLite.FRACTAL_FBM
 		terrain_noise.fractal_octaves = 8
 		terrain_noise.fractal_gain = 0.55
+
+func _configure_terrain_visuals() -> void:
+	if terrain.material_override is ShaderMaterial:
+		var material := (terrain.material_override as ShaderMaterial).duplicate() as ShaderMaterial
+		terrain.material_override = material
+		MarsExteriorProfile.apply_terrain_shader(material)
 
 func _configure_navigation_mesh() -> void:
 	var navigation_mesh := navigation_region.navigation_mesh
@@ -101,6 +109,8 @@ func _build_playable_terrain() -> void:
 	uvs.resize(vertex_count)
 
 	var half_size := terrain_size * 0.5
+	var min_height := INF
+	var max_height := -INF
 	for z_index in range(grid_width):
 		var v := float(z_index) / float(TERRAIN_RESOLUTION)
 		var z := lerpf(-half_size, half_size, v)
@@ -108,8 +118,11 @@ func _build_playable_terrain() -> void:
 			var u := float(x_index) / float(TERRAIN_RESOLUTION)
 			var x := lerpf(-half_size, half_size, u)
 			var vertex_index := z_index * grid_width + x_index
-			vertices[vertex_index] = Vector3(x, _sample_height(x, z), z)
+			var sampled_height := _sample_height(x, z)
+			vertices[vertex_index] = Vector3(x, sampled_height, z)
 			uvs[vertex_index] = Vector2(u, v)
+			min_height = minf(min_height, sampled_height)
+			max_height = maxf(max_height, sampled_height)
 
 	for z_index in range(TERRAIN_RESOLUTION):
 		for x_index in range(TERRAIN_RESOLUTION):
@@ -148,6 +161,10 @@ func _build_playable_terrain() -> void:
 	terrain_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	terrain.mesh = terrain_mesh
 	terrain_collision.shape = terrain_mesh.create_trimesh_shape()
+	if terrain.material_override is ShaderMaterial:
+		var material := terrain.material_override as ShaderMaterial
+		material.set_shader_parameter("height_scale", maxf(max_height - min_height, terrain_height_scale * 2.0))
+		TERRAIN_VISUAL_DATA.apply_to_material(material, vertices, normals, grid_width, min_height, max_height)
 	_build_terrain_underside_seal(vertices, grid_width)
 
 func _build_terrain_underside_seal(vertices: PackedVector3Array, grid_width: int) -> void:

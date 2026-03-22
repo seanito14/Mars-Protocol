@@ -9,6 +9,7 @@ const DRONE_SCENE := preload("res://scenes/drone.tscn")
 const HERO_DEMO_CONFIG_SCRIPT := preload("res://scripts/hero_demo_config.gd")
 const HERO_WRECK_SCRIPT := preload("res://scripts/hero_wreck.gd")
 const INTERACT_FOCUS_HIGHLIGHTER := preload("res://scripts/interact_focus_highlighter.gd")
+const TERRAIN_VISUAL_DATA := preload("res://scripts/terrain_visual_data.gd")
 const DECORATIVE_PEBBLE_COUNT: int = 4500
 const DECORATIVE_BOULDER_COUNT: int = 800
 const DECORATIVE_BRUSH_COUNT: int = 260
@@ -64,6 +65,7 @@ func _ready() -> void:
 	terrain_size = config.terrain_size
 	terrain_height_scale = config.terrain_height_scale
 	_build_noise()
+	_configure_terrain_visuals()
 	_build_playable_terrain()
 	_spawn_environment_dressing()
 	_position_player()
@@ -74,6 +76,12 @@ func _ready() -> void:
 	_send_sudo_ai_context("Player has spawned in the crater basin. Two wreck sites are visible and a storm front is building on the horizon.")
 	EventBus.push_mission_log("Hero demo ready. Walk the crater, inspect the wreckage, and talk to Sudo AI.")
 	_cache_storm_atmosphere_baseline()
+
+func _configure_terrain_visuals() -> void:
+	if terrain.material_override is ShaderMaterial:
+		var material := (terrain.material_override as ShaderMaterial).duplicate() as ShaderMaterial
+		terrain.material_override = material
+		MarsExteriorProfile.apply_terrain_shader(material)
 
 func _cache_storm_atmosphere_baseline() -> void:
 	var env := world_environment.environment
@@ -339,6 +347,8 @@ func _build_playable_terrain() -> void:
 	uvs.resize(vertex_count)
 
 	var half := terrain_size * 0.5
+	var min_height := INF
+	var max_height := -INF
 	for zi in range(grid_width):
 		var v := float(zi) / float(TERRAIN_RESOLUTION)
 		var z := lerpf(-half, half, v)
@@ -346,8 +356,11 @@ func _build_playable_terrain() -> void:
 			var u := float(xi) / float(TERRAIN_RESOLUTION)
 			var x := lerpf(-half, half, u)
 			var idx := zi * grid_width + xi
-			vertices[idx] = Vector3(x, _sample_height(x, z), z)
+			var sampled_height := _sample_height(x, z)
+			vertices[idx] = Vector3(x, sampled_height, z)
 			uvs[idx] = Vector2(u, v)
+			min_height = minf(min_height, sampled_height)
+			max_height = maxf(max_height, sampled_height)
 
 	for zi in range(TERRAIN_RESOLUTION):
 		for xi in range(TERRAIN_RESOLUTION):
@@ -376,6 +389,10 @@ func _build_playable_terrain() -> void:
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	terrain.mesh = mesh
 	terrain_collision.shape = mesh.create_trimesh_shape()
+	if terrain.material_override is ShaderMaterial:
+		var material := terrain.material_override as ShaderMaterial
+		material.set_shader_parameter("height_scale", maxf(max_height - min_height, terrain_height_scale * 2.0))
+		TERRAIN_VISUAL_DATA.apply_to_material(material, vertices, normals, grid_width, min_height, max_height)
 	_build_terrain_underside_seal(vertices, grid_width)
 
 func _build_terrain_underside_seal(vertices: PackedVector3Array, grid_width: int) -> void:

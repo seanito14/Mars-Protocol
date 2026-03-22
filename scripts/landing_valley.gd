@@ -41,6 +41,7 @@ const MESA_PROFILES := [
 
 const ROCK_SCENE_PATH: String = "res://scenes/rock.tscn"
 const ROVER_SCENE_PATH: String = "res://scenes/rover.tscn"
+const TERRAIN_VISUAL_DATA := preload("res://scripts/terrain_visual_data.gd")
 
 const LIGHT_ROCK_POSITIONS := [
 	Vector3(-132.0, 0.0, 196.0),
@@ -230,6 +231,7 @@ func _build_playable_terrain() -> void:
 	if terrain.material_override is ShaderMaterial:
 		var material := terrain.material_override as ShaderMaterial
 		material.set_shader_parameter("height_scale", maxf(terrain_max_height - terrain_min_height, HEIGHT_SCALE * 2.0))
+		TERRAIN_VISUAL_DATA.apply_to_material(material, vertices, normals, grid_width, terrain_min_height, terrain_max_height)
 
 	_build_terrain_underside_seal(vertices, grid_width)
 

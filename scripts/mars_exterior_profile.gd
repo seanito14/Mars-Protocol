@@ -56,6 +56,13 @@ const TERRAIN_STEEP_SHADOW_STRENGTH: float = 0.22             # Cliff self-shado
 const TERRAIN_DUST_SHADOW_STRENGTH: float = 0.05              # Low-area darkening
 const TERRAIN_BRIGHTNESS_FLOOR: float = 0.74                  # Darker floor reads as ground
 const TERRAIN_BRIGHTNESS_PEAK: float = 0.98                   # Never as bright as sky
+const TERRAIN_WORLD_VARIATION_SCALE: float = 0.014            # Broad world-space tonal breakup
+const TERRAIN_DETAIL_VARIATION_SCALE: float = 0.05            # Fine stable grain
+const TERRAIN_DISTANCE_FADE_END: float = 1400.0               # Distant mesas soften, near ground stays stable
+const TERRAIN_CLIFF_BLEND_START: float = 0.18
+const TERRAIN_CLIFF_BLEND_END: float = 0.52
+const TERRAIN_CAP_BLEND_START: float = 0.58
+const TERRAIN_CAP_BLEND_END: float = 0.92
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SEAL MATERIAL — terrain underside / edge skirt
@@ -112,6 +119,13 @@ static func apply_terrain_shader(material: ShaderMaterial) -> void:
 	material.set_shader_parameter("dust_shadow_strength", TERRAIN_DUST_SHADOW_STRENGTH)
 	material.set_shader_parameter("brightness_floor", TERRAIN_BRIGHTNESS_FLOOR)
 	material.set_shader_parameter("brightness_peak", TERRAIN_BRIGHTNESS_PEAK)
+	material.set_shader_parameter("world_variation_scale", TERRAIN_WORLD_VARIATION_SCALE)
+	material.set_shader_parameter("detail_variation_scale", TERRAIN_DETAIL_VARIATION_SCALE)
+	material.set_shader_parameter("distance_fade_end", TERRAIN_DISTANCE_FADE_END)
+	material.set_shader_parameter("cliff_blend_start", TERRAIN_CLIFF_BLEND_START)
+	material.set_shader_parameter("cliff_blend_end", TERRAIN_CLIFF_BLEND_END)
+	material.set_shader_parameter("cap_blend_start", TERRAIN_CAP_BLEND_START)
+	material.set_shader_parameter("cap_blend_end", TERRAIN_CAP_BLEND_END)
 
 static func make_seal_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
