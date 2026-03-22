@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/data_log.gd" id="1_data"]
 
@@ -14,11 +14,6 @@ emission_energy_multiplier = 1.4
 material = SubResource("StandardMaterial3D_1")
 size = Vector3(0.6, 0.6, 0.6)
 
-[sub_resource type="OmniLight3D" id="OmniLight3D_1"]
-light_color = Color(0.28, 0.62, 1.0)
-light_energy = 1.8
-omni_range = 5.0
-
 [node name="DataLog" type="Node3D"]
 script = ExtResource("1_data")
 
@@ -26,4 +21,6 @@ script = ExtResource("1_data")
 mesh = SubResource("BoxMesh_1")
 
 [node name="OmniLight3D" type="OmniLight3D" parent="."]
-light = SubResource("OmniLight3D_1")
+light_color = Color(0.28, 0.62, 1.0, 1)
+light_energy = 1.8
+omni_range = 5.0

@@ -59,6 +59,8 @@ var telemetry_right: Control
 var telemetry_o2_label: Label
 var telemetry_integrity_label: Label
 var telemetry_rad_label: Label
+var upgrade_touch_button: Button
+var sudo_touch_button: Button
 var hud_scale: float = 1.0
 var vignette_rect: ColorRect
 var vignette_material: ShaderMaterial
@@ -145,6 +147,15 @@ func _process(_delta: float) -> void:
 		vignette_material.set_shader_parameter("storm_intensity", float(player.get("storm_intensity")))
 		vignette_material.set_shader_parameter("breathing_phase", float(player.get("breathing_phase")))
 
+	if sudo_touch_button != null:
+		sudo_touch_button.visible = _should_show_touch_controls()
+		if SudoAIAgent != null and SudoAIAgent.hot_word_active:
+			sudo_touch_button.text = "END SUDO"
+		else:
+			sudo_touch_button.text = "SUDO"
+	if upgrade_touch_button != null:
+		upgrade_touch_button.visible = _should_show_upgrade_button()
+
 	_update_mission_log(_delta)
 	queue_redraw()
 
@@ -195,6 +206,8 @@ func _build_hud() -> void:
 	bottom_left_panel.visible = true
 	_build_touch_area()
 	_build_virtual_joysticks()
+	_build_upgrade_touch_button()
+	_build_sudo_touch_button()
 
 func _build_top_left() -> void:
 	top_left_rail = Control.new()
@@ -346,14 +359,46 @@ func _build_telemetry_panels() -> void:
 
 func _build_virtual_joysticks() -> void:
 	left_stick = _create_virtual_joystick(true)
+	left_stick.visible = _should_show_touch_controls()
 	add_child(left_stick)
 	if player != null:
 		left_stick.vector_changed.connect(player.set_virtual_move_input)
 
 	right_stick = _create_virtual_joystick(false)
+	right_stick.visible = _should_show_touch_controls()
 	add_child(right_stick)
 	if player != null:
 		right_stick.vector_changed.connect(player.set_virtual_look_input)
+
+func _build_sudo_touch_button() -> void:
+	sudo_touch_button = Button.new()
+	sudo_touch_button.visible = _should_show_touch_controls()
+	sudo_touch_button.mouse_filter = Control.MOUSE_FILTER_STOP
+	sudo_touch_button.focus_mode = Control.FOCUS_NONE
+	sudo_touch_button.z_index = 7
+	sudo_touch_button.text = "SUDO"
+	sudo_touch_button.add_theme_stylebox_override("normal", _make_touch_button_style(Color(C_PANEL_BG.r, C_PANEL_BG.g, C_PANEL_BG.b, 0.38)))
+	sudo_touch_button.add_theme_stylebox_override("hover", _make_touch_button_style(Color(C_PANEL_BG.r, C_PANEL_BG.g, C_PANEL_BG.b, 0.5)))
+	sudo_touch_button.add_theme_stylebox_override("pressed", _make_touch_button_style(Color(C_AMBER.r, C_AMBER.g, C_AMBER.b, 0.28)))
+	sudo_touch_button.add_theme_color_override("font_color", C_TEXT)
+	sudo_touch_button.add_theme_font_size_override("font_size", 16)
+	sudo_touch_button.pressed.connect(_on_sudo_touch_button_pressed)
+	add_child(sudo_touch_button)
+
+func _build_upgrade_touch_button() -> void:
+	upgrade_touch_button = Button.new()
+	upgrade_touch_button.visible = _should_show_upgrade_button()
+	upgrade_touch_button.mouse_filter = Control.MOUSE_FILTER_STOP
+	upgrade_touch_button.focus_mode = Control.FOCUS_NONE
+	upgrade_touch_button.z_index = 7
+	upgrade_touch_button.text = "UPGRADE"
+	upgrade_touch_button.add_theme_stylebox_override("normal", _make_touch_button_style(Color(C_PANEL_BG.r, C_PANEL_BG.g, C_PANEL_BG.b, 0.38)))
+	upgrade_touch_button.add_theme_stylebox_override("hover", _make_touch_button_style(Color(C_PANEL_BG.r, C_PANEL_BG.g, C_PANEL_BG.b, 0.5)))
+	upgrade_touch_button.add_theme_stylebox_override("pressed", _make_touch_button_style(Color(C_AMBER.r, C_AMBER.g, C_AMBER.b, 0.28)))
+	upgrade_touch_button.add_theme_color_override("font_color", C_TEXT)
+	upgrade_touch_button.add_theme_font_size_override("font_size", 16)
+	upgrade_touch_button.pressed.connect(_on_upgrade_touch_button_pressed)
+	add_child(upgrade_touch_button)
 
 func _create_virtual_joystick(is_left: bool) -> Control:
 	var stick = VirtualJoystickScript.new()
@@ -487,13 +532,29 @@ func _on_window_resized() -> void:
 	left_stick.queue_redraw()
 	right_stick.queue_redraw()
 	for child in left_stick.get_children():
-		if child is Control:
+		if child is Control and child.name == "Knob":
 			(child as Control).size = stick_size
 			(child as Control).queue_redraw()
 	for child in right_stick.get_children():
-		if child is Control:
+		if child is Control and child.name == "Knob":
 			(child as Control).size = stick_size
 			(child as Control).queue_redraw()
+
+	if sudo_touch_button != null:
+		var button_size := Vector2(160.0, 52.0) * hud_scale
+		var button_gap := 20.0 * hud_scale
+		var total_width := button_size.x
+		if upgrade_touch_button != null and upgrade_touch_button.visible:
+			total_width = button_size.x * 2.0 + button_gap
+		var group_x := (vp.x - total_width) * 0.5
+		if upgrade_touch_button != null:
+			upgrade_touch_button.size = button_size
+			upgrade_touch_button.position = Vector2(group_x, vp.y - button_size.y - maxf(28.0, vp.y * 0.075))
+		sudo_touch_button.size = button_size
+		var sudo_x := group_x
+		if upgrade_touch_button != null and upgrade_touch_button.visible:
+			sudo_x += button_size.x + button_gap
+		sudo_touch_button.position = Vector2(sudo_x, vp.y - button_size.y - maxf(28.0, vp.y * 0.075))
 
 	_apply_font_scale()
 
@@ -673,8 +734,40 @@ func _make_glass_style() -> StyleBoxFlat:
 	style.anti_aliasing_size = 1.4
 	return style
 
+func _make_touch_button_style(bg_color: Color) -> StyleBoxFlat:
+	var style := _make_glass_style()
+	style.bg_color = bg_color
+	style.border_color = Color(C_AMBER.r, C_AMBER.g, C_AMBER.b, 0.66)
+	style.corner_radius_top_left = 24
+	style.corner_radius_top_right = 24
+	style.corner_radius_bottom_right = 24
+	style.corner_radius_bottom_left = 24
+	return style
+
 func _set_font_size(label: Label, value: float) -> void:
 	label.add_theme_font_size_override("font_size", maxi(int(round(value)), 10))
+
+func _should_show_touch_controls() -> bool:
+	return OS.get_name() == "iOS" or OS.has_feature("mobile")
+
+func _should_show_upgrade_button() -> bool:
+	return OS.get_name() == "iOS"
+
+func _on_sudo_touch_button_pressed() -> void:
+	if SudoAIAgent == null:
+		return
+	if SudoAIAgent.hot_word_active:
+		SudoAIAgent.deactivate_hot_word()
+		return
+	if SudoAIAgent.gameplay_voice_enabled:
+		SudoAIAgent.activate_hot_word()
+	else:
+		SudoAIAgent.notify_gameplay_input_started()
+
+func _on_upgrade_touch_button_pressed() -> void:
+	if MonetizationService == null:
+		return
+	MonetizationService.show_paywall("hud_overlay")
 
 # ============================================================================
 # PAUSE MENU

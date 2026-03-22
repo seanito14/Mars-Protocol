@@ -76,6 +76,10 @@ func _ready() -> void:
 	_send_sudo_ai_context("Player has spawned in the crater basin. Two wreck sites are visible and a storm front is building on the horizon.")
 	EventBus.push_mission_log("Hero demo ready. Walk the crater, inspect the wreckage, and talk to Sudo AI.")
 	_cache_storm_atmosphere_baseline()
+	# Proactively boot SudoAI so it greets the player on scene load
+	# instead of waiting for the first keyboard/mouse input.
+	if SudoAIAgent:
+		SudoAIAgent.notify_gameplay_input_started()
 
 func _configure_terrain_visuals() -> void:
 	if terrain.material_override is ShaderMaterial:

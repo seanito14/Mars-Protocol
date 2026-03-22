@@ -89,6 +89,10 @@ func _ready() -> void:
 	_prepare_hud_reveal()
 	_send_sudo_ai_context("Player has landed in the strict-copy valley. The rover is parked in the mid-ground corridor and the landing basin is clear for exploration.")
 	EventBus.push_mission_log("Landing complete. Explore the valley.")
+	# Proactively boot SudoAI so it greets the player on scene load
+	# instead of waiting for the first keyboard/mouse input.
+	if SudoAIAgent:
+		SudoAIAgent.notify_gameplay_input_started()
 
 func get_ground_height(x: float, z: float) -> float:
 	return _sample_height(x, z)

@@ -1,6 +1,7 @@
 [gd_scene load_steps=2 format=3 uid="uid://hero_hud_1234"]
 
 [ext_resource type="Script" path="res://scripts/hero_hud.gd" id="1_script"]
+[ext_resource type="PackedScene" uid="uid://virtual_joystick_123" path="res://scenes/ui/virtual_joystick.tscn" id="2_joystick"]
 
 [node name="HeroHUD" type="Control"]
 layout_mode = 3
@@ -11,3 +12,5 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("1_script")
+
+[node name="VirtualJoystick" parent="." instance=ExtResource("2_joystick")]

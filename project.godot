@@ -37,6 +37,15 @@ SudoAIAgent="*res://scripts/sudo_ai_agent.gd"
 window/size/viewport_width=2360
 window/size/viewport_height=1640
 window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[input_devices]
+
+pointing/emulate_touch_from_mouse=true
+
+[sudo_ai]
+
+ios_bridge_base_url="http://zs-Mac-mini.local:8765"
 
 [rendering]
 

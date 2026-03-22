@@ -37,6 +37,10 @@ API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 AGENT_ID = os.environ.get("ELEVENLABS_AGENT_ID", "")
 VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
 MODEL_ID = os.environ.get("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
+SECRET_IMPORT_READY = os.environ.get("MARS_PROTOCOL_SECRET_IMPORT_READY", "0") == "1"
+RUNTIME_ENV_READY = os.environ.get("MARS_PROTOCOL_RUNTIME_ENV_READY", "0") == "1"
+DEPENDENCY_INSTALL_READY = os.environ.get("MARS_PROTOCOL_DEPENDENCY_INSTALL_READY", "0") == "1"
+SETUP_ERROR = os.environ.get("MARS_PROTOCOL_SETUP_ERROR", "")
 
 WAKE_ENABLED = os.environ.get("SUDO_AI_WAKE_ENABLED", "1") != "0"
 WAKE_UDP_HOST = os.environ.get("SUDO_AI_WAKE_HOST", "127.0.0.1")
@@ -229,6 +233,10 @@ class Handler(BaseHTTPRequestHandler):
                     "tts_enabled": bool(API_KEY),
                     "agent_enabled": bool(API_KEY and AGENT_ID),
                     "voice_id": VOICE_ID,
+                    "secret_import_ready": SECRET_IMPORT_READY,
+                    "runtime_env_ready": RUNTIME_ENV_READY,
+                    "dependency_install_ready": DEPENDENCY_INSTALL_READY,
+                    "setup_error": SETUP_ERROR,
                     **wake_payload,
                 }
             )
@@ -304,6 +312,13 @@ def main() -> None:
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Voice companion listening on http://{HOST}:{PORT}")
     print(f"Wake UDP target: {WAKE_UDP_HOST}:{WAKE_UDP_PORT}")
+    print(
+        "Setup status: "
+        f"secret_import_ready={SECRET_IMPORT_READY} "
+        f"runtime_env_ready={RUNTIME_ENV_READY} "
+        f"dependency_install_ready={DEPENDENCY_INSTALL_READY} "
+        f"setup_error={SETUP_ERROR or 'none'}"
+    )
     if not API_KEY or not AGENT_ID:
         print("ElevenLabs credentials not configured; signed URLs will be unavailable.")
     if not WAKE_DETECTOR.supported:

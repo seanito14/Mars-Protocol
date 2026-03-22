@@ -23,7 +23,7 @@ func _notification(what: int) -> void:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var touch_event := event as InputEventScreenTouch
-		var local_position := _to_local_position(touch_event.position)
+		var local_position := touch_event.position
 		if touch_event.pressed and active_touch_id == -1 and _is_inside_joystick(local_position):
 			active_touch_id = touch_event.index
 			_update_output(local_position)
@@ -37,13 +37,13 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventScreenDrag:
 		var drag_event := event as InputEventScreenDrag
 		if drag_event.index == active_touch_id:
-			_update_output(_to_local_position(drag_event.position))
+			_update_output(drag_event.position)
 			accept_event()
 			return
 
 	if event is InputEventMouseButton:
 		var mouse_button := event as InputEventMouseButton
-		var mouse_position := _to_local_position(mouse_button.position)
+		var mouse_position := mouse_button.position
 		if mouse_button.button_index == MOUSE_BUTTON_LEFT:
 			if mouse_button.pressed and _is_inside_joystick(mouse_position):
 				dragging_with_mouse = true
@@ -58,11 +58,8 @@ func _gui_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseMotion and dragging_with_mouse:
 		var mouse_motion := event as InputEventMouseMotion
-		_update_output(_to_local_position(mouse_motion.position))
+		_update_output(mouse_motion.position)
 		accept_event()
-
-func _to_local_position(screen_position: Vector2) -> Vector2:
-	return screen_position - get_global_rect().position
 
 func _is_inside_joystick(local_position: Vector2) -> bool:
 	return Rect2(Vector2.ZERO, size).has_point(local_position)

@@ -11,12 +11,14 @@ extends Node
 
 const AGENT_ID: String = "agent_8501km8et6jgexcbzctqvrg3zmgs"
 const BRIDGE_BASE_URL: String = "http://127.0.0.1:8765"
-const BRIDGE_SCRIPT_PATH: String = "res://tools/elevenlabs_demo_bridge.py"
+const IOS_BRIDGE_BASE_URL_SETTING: String = "sudo_ai/ios_bridge_base_url"
+const DEFAULT_IOS_BRIDGE_BASE_URL: String = "http://zs-Mac-mini.local:8765"
+const BRIDGE_SCRIPT_PATH: String = "res://tools/sudo_ai_companion_launcher.py"
+const IOS_AUDIO_SESSION_COMMAND_PATH: String = "user://ios_audio_session_command.json"
 const BRIDGE_HEALTH_POLL_INTERVAL: float = 3.0
 const BRIDGE_WAKE_EVENT_PORT: int = 4245
 const RECONNECT_DELAY: float = 3.0
-const ACTIVATION_GREETING_TEXT: String = "This is Sudo AI speaking, I would love NOT to help you today but here we are..."
-const ACTIVATION_GREETING_UTTERANCE_ID: int = 9101
+const ACTIVATION_GREETING_PROMPT: String = "Give your brief startup greeting to the commander, then wait for their request."
 const MAX_MIC_FRAMES_PER_PACKET: int = 1600
 const MIC_SEND_INTERVAL: float = 0.1
 const SILENCE_TIMEOUT_SECONDS: float = 4.5
@@ -50,7 +52,6 @@ var agent_output_audio_format: String = "pcm_16000"
 var listen_after_activation_greeting: bool = false
 var activation_greeting_in_progress: bool = false
 var activation_greeting_played_for_scene: bool = false
-var tts_voice_id: String = ""
 var display_state_override: String = ""
 var pending_scene_context: String = ""
 var last_scene_path: String = ""
@@ -60,16 +61,22 @@ var runtime_bootstrapped: bool = false
 var scene_voice_started: bool = false
 var scene_auto_activation_pending: bool = false
 var bridge_launch_pid: int = -1
-var bridge_base_url: String = BRIDGE_BASE_URL
+var bridge_base_url: String = ""
 var bridge_available: bool = false
 var bridge_auth_available: bool = false
 var bridge_tts_available: bool = false
 var bridge_wake_supported: bool = false
 var bridge_wake_listening: bool = false
 var bridge_wake_reason: String = ""
+var bridge_secret_import_ready: bool = false
+var bridge_runtime_env_ready: bool = false
+var bridge_dependency_install_ready: bool = false
+var bridge_setup_error: String = ""
+var last_bridge_setup_status_key: String = ""
 var bridge_health_poll_timer: float = 0.0
 var desired_wake_listener_enabled: bool = false
 var silence_timer: float = SILENCE_TIMEOUT_SECONDS
+var ios_audio_session_mode: String = ""
 
 ## Audio playback
 var audio_player: AudioStreamPlayer = null
@@ -95,6 +102,7 @@ var bridge_wake_request: HTTPRequest = null
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	bridge_base_url = _resolve_bridge_base_url()
 
 	audio_player = AudioStreamPlayer.new()
 	audio_player.bus = "Master"
@@ -111,16 +119,15 @@ func _ready() -> void:
 	bridge_health_request.request_completed.connect(_on_bridge_health_request_completed)
 	bridge_signed_url_request.request_completed.connect(_on_bridge_signed_url_request_completed)
 	bridge_wake_request.request_completed.connect(_on_bridge_wake_request_completed)
-
-	DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_ENDED, Callable(self, "_on_tts_utterance_ended"))
-	DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_CANCELED, Callable(self, "_on_tts_utterance_canceled"))
+	_sync_ios_audio_session_mode()
 
 func _ensure_runtime_bootstrapped() -> void:
 	if runtime_bootstrapped:
 		return
 	runtime_bootstrapped = true
 	_setup_microphone()
-	_setup_wake_udp_listener()
+	if _should_request_wake_listener():
+		_setup_wake_udp_listener()
 	_request_bridge_health()
 	print("SudoAI: Agent service ready. Gameplay scenes will listen for 'sudo' in standby.")
 
@@ -154,6 +161,7 @@ func _process(delta: float) -> void:
 	if runtime_bootstrapped:
 		_poll_wake_events()
 		_poll_bridge_health(delta)
+		_maybe_auto_activate_scene_intro()
 	_update_volume_levels()
 
 	if reconnect_timer >= 0.0:
@@ -225,7 +233,8 @@ func disconnect_agent() -> void:
 	audio_buffer.clear()
 	EventBus.conversation_disconnected.emit("manual_disconnect")
 	if gameplay_voice_enabled:
-		_request_wake_listener(true)
+		if _should_request_wake_listener():
+			_request_wake_listener(true)
 		_emit_bridge_standby_state()
 	else:
 		_set_state_with_label(AgentState.OFFLINE, "OFFLINE")
@@ -273,7 +282,8 @@ func activate_hot_word() -> void:
 	scene_auto_activation_pending = false
 	hot_word_active = true
 	EventBus.sudo_ai_hot_word_activated.emit()
-	_request_wake_listener(false)
+	if _should_request_wake_listener():
+		_request_wake_listener(false)
 	if state == AgentState.CONNECTED:
 		_begin_active_session()
 	else:
@@ -283,8 +293,6 @@ func deactivate_hot_word() -> void:
 	hot_word_active = false
 	listen_after_activation_greeting = false
 	_stop_mic()
-	if activation_greeting_in_progress or DisplayServer.tts_is_speaking():
-		DisplayServer.tts_stop()
 	activation_greeting_in_progress = false
 	if audio_player and audio_player.playing:
 		audio_player.stop()
@@ -296,7 +304,8 @@ func deactivate_hot_word() -> void:
 	EventBus.sudo_ai_overlay_dismissed.emit()
 	EventBus.conversation_disconnected.emit("standby")
 	if gameplay_voice_enabled:
-		_request_wake_listener(true)
+		if _should_request_wake_listener():
+			_request_wake_listener(true)
 		_emit_bridge_standby_state()
 	else:
 		_set_state_with_label(AgentState.OFFLINE, "OFFLINE")
@@ -364,7 +373,10 @@ func _enable_gameplay_voice() -> void:
 	gameplay_voice_enabled = true
 	_ensure_overlay_present()
 	_request_bridge_health()
-	_request_wake_listener(true)
+	if _should_request_wake_listener():
+		_request_wake_listener(true)
+	else:
+		desired_wake_listener_enabled = false
 	_emit_bridge_standby_state()
 	_maybe_auto_activate_scene_intro()
 
@@ -381,7 +393,8 @@ func _disable_gameplay_voice() -> void:
 		_close_socket_quietly("scene_gate")
 		_stop_mic()
 		_set_state_with_label(AgentState.OFFLINE, "OFFLINE")
-	_request_wake_listener(false)
+	if _should_request_wake_listener():
+		_request_wake_listener(false)
 	EventBus.sudo_ai_overlay_dismissed.emit()
 
 func _is_current_scene_gameplay() -> bool:
@@ -420,20 +433,19 @@ func _sync_scene_tracking() -> bool:
 	return true
 
 func _maybe_auto_activate_scene_intro() -> void:
-	if not scene_auto_activation_pending:
-		return
 	if not gameplay_voice_enabled:
 		return
-	if hot_word_active or activation_greeting_in_progress or activation_greeting_played_for_scene:
+	if not _is_current_scene_gameplay():
+		return
+	if hot_word_active or activation_greeting_in_progress:
+		return
+	if activation_greeting_played_for_scene:
 		scene_auto_activation_pending = false
 		return
-	if bridge_available and bridge_auth_available:
+	if bridge_available:
 		scene_auto_activation_pending = false
 		activate_hot_word()
 		return
-	if bridge_available and not bridge_auth_available:
-		scene_auto_activation_pending = false
-		_speak_activation_greeting()
 
 func _is_gameplay_scene_path(scene_path: String) -> bool:
 	return bool(GAMEPLAY_SCENE_PATHS.get(scene_path, false))
@@ -456,7 +468,19 @@ func _emit_bridge_standby_state() -> void:
 		_set_state_with_label(AgentState.OFFLINE, "OFFLINE")
 		return
 	if not bridge_available:
-		_set_state_with_label(AgentState.OFFLINE, "OFFLINE")
+		if _uses_remote_bridge():
+			_set_state_with_label(AgentState.OFFLINE, "WAITING FOR MAC VOICE BRIDGE")
+		else:
+			_set_state_with_label(AgentState.OFFLINE, "OFFLINE")
+		return
+	if not bridge_secret_import_ready:
+		_set_state_with_label(AgentState.ERROR, "SUDO SETUP REQUIRED")
+		return
+	if not bridge_auth_available:
+		_set_state_with_label(AgentState.ERROR, "SUDO AUTH REQUIRED")
+		return
+	if _uses_remote_bridge():
+		_set_state_with_label(AgentState.STANDBY, "TAP SUDO TO TALK")
 		return
 	if bridge_wake_supported:
 		if bridge_wake_listening:
@@ -464,14 +488,13 @@ func _emit_bridge_standby_state() -> void:
 		else:
 			_set_state_with_label(AgentState.STANDBY, "STANDBY")
 		return
-	if not bridge_wake_reason.is_empty():
-		_set_state_with_label(AgentState.ERROR, "MIC BLOCKED")
-	else:
-		_set_state_with_label(AgentState.ERROR, "OFFLINE")
+	_set_state_with_label(AgentState.STANDBY, "PRESS F TO TALK")
 
 ## ── Local bridge / wake events ──────────────────────────────────────────
 
 func _maybe_launch_voice_companion() -> void:
+	if _uses_remote_bridge():
+		return
 	if bridge_available or bridge_launch_pid > 0:
 		return
 	var script_path := ProjectSettings.globalize_path(BRIDGE_SCRIPT_PATH)
@@ -503,6 +526,9 @@ func _request_bridge_health() -> void:
 			_emit_bridge_standby_state()
 
 func _request_wake_listener(enabled: bool) -> void:
+	if not _should_request_wake_listener():
+		desired_wake_listener_enabled = false
+		return
 	desired_wake_listener_enabled = enabled
 	if bridge_wake_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
 		return
@@ -547,18 +573,23 @@ func _handle_wake_event(raw_json: String) -> void:
 			bridge_wake_supported = false
 			bridge_wake_reason = "mic_blocked"
 			if gameplay_voice_enabled and not hot_word_active:
-				_set_state_with_label(AgentState.ERROR, "MIC BLOCKED")
+				_emit_bridge_standby_state()
 		"wake_error":
 			bridge_wake_supported = false
 			bridge_wake_reason = str(event.get("message", "wake_error"))
 			if gameplay_voice_enabled and not hot_word_active:
-				_set_state_with_label(AgentState.ERROR, "MIC BLOCKED")
+				_emit_bridge_standby_state()
 
 func _on_bridge_health_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	bridge_available = result == HTTPRequest.RESULT_SUCCESS and response_code >= 200 and response_code < 300
 	if not bridge_available:
 		bridge_auth_available = false
 		bridge_tts_available = false
+		bridge_secret_import_ready = false
+		bridge_runtime_env_ready = false
+		bridge_dependency_install_ready = false
+		bridge_setup_error = ""
+		last_bridge_setup_status_key = ""
 		_maybe_launch_voice_companion()
 		bridge_health_poll_timer = 0.5
 		if gameplay_voice_enabled and not hot_word_active:
@@ -568,6 +599,13 @@ func _on_bridge_health_request_completed(result: int, response_code: int, _heade
 	var parsed: Variant = JSON.parse_string(body.get_string_from_utf8())
 	if typeof(parsed) != TYPE_DICTIONARY:
 		bridge_available = false
+		bridge_auth_available = false
+		bridge_tts_available = false
+		bridge_secret_import_ready = false
+		bridge_runtime_env_ready = false
+		bridge_dependency_install_ready = false
+		bridge_setup_error = ""
+		last_bridge_setup_status_key = ""
 		_maybe_launch_voice_companion()
 		bridge_health_poll_timer = 0.5
 		if gameplay_voice_enabled and not hot_word_active:
@@ -580,6 +618,11 @@ func _on_bridge_health_request_completed(result: int, response_code: int, _heade
 	bridge_wake_supported = bool(payload.get("wake_supported", false))
 	bridge_wake_listening = bool(payload.get("wake_listening", false))
 	bridge_wake_reason = str(payload.get("wake_reason", ""))
+	bridge_secret_import_ready = bool(payload.get("secret_import_ready", false))
+	bridge_runtime_env_ready = bool(payload.get("runtime_env_ready", false))
+	bridge_dependency_install_ready = bool(payload.get("dependency_install_ready", false))
+	bridge_setup_error = str(payload.get("setup_error", ""))
+	_report_bridge_setup_status()
 
 	if gameplay_voice_enabled and desired_wake_listener_enabled and bridge_wake_supported and not bridge_wake_listening and not hot_word_active:
 		_request_wake_listener(true)
@@ -624,6 +667,62 @@ func _on_bridge_wake_request_completed(_result: int, response_code: int, _header
 	if gameplay_voice_enabled and not hot_word_active:
 		_emit_bridge_standby_state()
 	_maybe_auto_activate_scene_intro()
+
+func _report_bridge_setup_status() -> void:
+	var status_key := "%s|%s|%s|%s|%s|%s|%s" % [
+		str(bridge_secret_import_ready),
+		str(bridge_runtime_env_ready),
+		str(bridge_dependency_install_ready),
+		str(bridge_auth_available),
+		str(bridge_wake_supported),
+		bridge_wake_reason,
+		bridge_setup_error
+	]
+	if status_key == last_bridge_setup_status_key:
+		return
+	last_bridge_setup_status_key = status_key
+	var message := _build_bridge_setup_status_message()
+	if not message.is_empty():
+		EventBus.push_mission_log(message)
+
+func _build_bridge_setup_status_message() -> String:
+	if not bridge_available:
+		if _uses_remote_bridge():
+			return "[SUDO AI] Waiting for the Mac voice bridge at %s." % bridge_base_url
+		return "[SUDO AI] Local voice bridge offline."
+	if not bridge_secret_import_ready:
+		match bridge_setup_error:
+			"secret_source_missing":
+				return "[SUDO AI] Setup required: add sudoaiapi.rtf to the Desktop with ElevenLabs credentials."
+			"secret_import_invalid":
+				return "[SUDO AI] Setup required: sudoaiapi.rtf could not be parsed. Use env-style ELEVENLABS entries."
+			"secret_persist_failed":
+				return "[SUDO AI] Setup blocked: secure secret import could not be saved."
+			_:
+				return "[SUDO AI] Setup required: ElevenLabs credentials not imported yet."
+	if not bridge_runtime_env_ready:
+		if bridge_setup_error == "runtime_env_create_failed" or bridge_setup_error == "runtime_env_missing_python":
+			return "[SUDO AI] Secure runtime setup failed. Manual voice may still work, but wake word is unavailable."
+		return "[SUDO AI] Bootstrapping secure voice runtime."
+	if not bridge_dependency_install_ready:
+		if bridge_setup_error == "dependency_install_failed":
+			return "[SUDO AI] Voice dependencies failed to install. Wake word is unavailable until setup succeeds."
+		if bridge_setup_error == "dependency_manifest_missing":
+			return "[SUDO AI] Voice dependency manifest missing. Wake word is unavailable."
+		return "[SUDO AI] Installing SudoAI voice dependencies."
+	if not bridge_auth_available:
+		return "[SUDO AI] ElevenLabs auth unavailable. Check the imported credentials."
+	if _uses_remote_bridge():
+		return "[SUDO AI] iPad voice bridge ready. Tap SUDO to talk."
+	if bridge_wake_supported:
+		return "[SUDO AI] Wake word standby ready."
+	if bridge_wake_reason == "missing_vosk_model":
+		return "[SUDO AI] Wake word unavailable until SUDO_AI_WAKE_MODEL_PATH points to a Vosk model."
+	if bridge_wake_reason == "missing_python_dependencies":
+		return "[SUDO AI] Wake word runtime still installing."
+	if not bridge_wake_reason.is_empty():
+		return "[SUDO AI] Wake word unavailable right now. Press F to talk."
+	return ""
 
 ## ── Internal conversation flow ──────────────────────────────────────────
 
@@ -769,7 +868,9 @@ func _on_audio_finished() -> void:
 
 	is_speaking = false
 	EventBus.sudo_ai_speech_finished.emit()
-	if hot_word_active and mic_active and gameplay_voice_enabled:
+	if activation_greeting_in_progress:
+		_finish_activation_greeting(true)
+	elif hot_word_active and mic_active and gameplay_voice_enabled:
 		silence_timer = SILENCE_TIMEOUT_SECONDS
 		_set_state(AgentState.LISTENING)
 	else:
@@ -786,6 +887,7 @@ func _start_mic() -> void:
 		mic_effect.clear_buffer()
 	if mic_stream_player:
 		mic_stream_player.play()
+	_sync_ios_audio_session_mode()
 
 func _stop_mic() -> void:
 	if not mic_active:
@@ -793,6 +895,7 @@ func _stop_mic() -> void:
 	mic_active = false
 	if mic_stream_player:
 		mic_stream_player.stop()
+	_sync_ios_audio_session_mode()
 
 func _send_mic_audio() -> void:
 	if not mic_effect or not mic_active:
@@ -822,8 +925,6 @@ func _update_volume_levels() -> void:
 		current_input_volume = lerpf(current_input_volume, 0.0, 0.12)
 	if not is_speaking:
 		current_output_volume = lerpf(current_output_volume, 0.0, 0.12)
-	elif activation_greeting_in_progress or DisplayServer.tts_is_speaking():
-		current_output_volume = lerpf(current_output_volume, 0.8, 0.2)
 	elif audio_player.playing:
 		current_output_volume = lerpf(current_output_volume, 0.76, 0.15)
 
@@ -832,8 +933,7 @@ func _update_volume_levels() -> void:
 func _speak_activation_greeting() -> void:
 	if activation_greeting_in_progress:
 		return
-	var voice_id := _resolve_tts_voice_id()
-	if voice_id.is_empty():
+	if socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		activation_greeting_played_for_scene = true
 		start_listening()
 		return
@@ -842,37 +942,7 @@ func _speak_activation_greeting() -> void:
 	is_speaking = true
 	listen_after_activation_greeting = true
 	_set_state(AgentState.GREETING)
-	EventBus.sudo_ai_agent_response.emit(ACTIVATION_GREETING_TEXT)
-	EventBus.agent_response_received.emit(ACTIVATION_GREETING_TEXT)
-	EventBus.push_mission_log("> SudoAI: %s" % ACTIVATION_GREETING_TEXT)
-	DisplayServer.tts_stop()
-	DisplayServer.tts_speak(ACTIVATION_GREETING_TEXT, voice_id, 70, 1.0, 1.0, ACTIVATION_GREETING_UTTERANCE_ID, true)
-
-func _resolve_tts_voice_id() -> String:
-	if not tts_voice_id.is_empty():
-		return tts_voice_id
-	var english_voices: Variant = DisplayServer.tts_get_voices_for_language("en")
-	if english_voices is Array and not english_voices.is_empty():
-		var first_voice: Variant = english_voices[0]
-		if first_voice is Dictionary and first_voice.has("id"):
-			tts_voice_id = str(first_voice["id"])
-			return tts_voice_id
-	var fallback_voices: Variant = DisplayServer.tts_get_voices()
-	if fallback_voices is Array and not fallback_voices.is_empty():
-		var fallback_voice: Variant = fallback_voices[0]
-		if fallback_voice is Dictionary and fallback_voice.has("id"):
-			tts_voice_id = str(fallback_voice["id"])
-	return tts_voice_id
-
-func _on_tts_utterance_ended(utterance_id: int) -> void:
-	if utterance_id != ACTIVATION_GREETING_UTTERANCE_ID:
-		return
-	_finish_activation_greeting(true)
-
-func _on_tts_utterance_canceled(utterance_id: int) -> void:
-	if utterance_id != ACTIVATION_GREETING_UTTERANCE_ID:
-		return
-	_finish_activation_greeting(false)
+	_send_user_message(ACTIVATION_GREETING_PROMPT, false)
 
 func _finish_activation_greeting(start_listening_after: bool) -> void:
 	if not activation_greeting_in_progress:
@@ -899,12 +969,16 @@ func _enter_timeout_standby() -> void:
 
 func _handle_activation_failure(reason: String) -> void:
 	push_warning("SudoAI: Activation failed (%s)." % reason)
-	EventBus.push_mission_log("[SUDO AI] ElevenLabs connection unavailable. Check the local bridge and credentials.")
+	if bridge_setup_error.is_empty():
+		EventBus.push_mission_log("[SUDO AI] ElevenLabs connection unavailable. Check the secure bridge setup.")
+	else:
+		_report_bridge_setup_status()
 	hot_word_active = false
 	should_reconnect = false
 	_stop_mic()
 	_close_socket_quietly(reason)
-	_request_wake_listener(true)
+	if _should_request_wake_listener():
+		_request_wake_listener(true)
 	EventBus.sudo_ai_overlay_dismissed.emit()
 	if gameplay_voice_enabled:
 		_emit_bridge_standby_state()
@@ -914,6 +988,8 @@ func _handle_activation_failure(reason: String) -> void:
 func _handle_socket_closed(reason: String) -> void:
 	_stop_mic()
 	is_speaking = false
+	activation_greeting_in_progress = false
+	listen_after_activation_greeting = false
 	pending_audio_chunks.clear()
 	audio_buffer.clear()
 	EventBus.sudo_ai_disconnected.emit(reason)
@@ -987,5 +1063,45 @@ func _set_state_with_label(new_state: AgentState, label_override: String) -> voi
 	var state_changed := state != new_state or display_state_override != label_override
 	state = new_state
 	display_state_override = label_override
+	_sync_ios_audio_session_mode()
 	if state_changed:
 		EventBus.sudo_ai_state_changed.emit(get_state_label())
+
+func _sync_ios_audio_session_mode() -> void:
+	if not _uses_remote_bridge():
+		return
+	var desired_mode := _get_ios_audio_session_mode()
+	if desired_mode == ios_audio_session_mode:
+		return
+	ios_audio_session_mode = desired_mode
+	var absolute_path := ProjectSettings.globalize_path(IOS_AUDIO_SESSION_COMMAND_PATH)
+	var file := FileAccess.open(absolute_path, FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_string(JSON.stringify({
+		"mode": desired_mode,
+		"updated_at": Time.get_ticks_msec(),
+	}))
+
+func _get_ios_audio_session_mode() -> String:
+	if hot_word_active or mic_active or activation_greeting_in_progress:
+		return "voice"
+	match state:
+		AgentState.CONNECTING, AgentState.CONNECTED, AgentState.GREETING, AgentState.LISTENING, AgentState.SPEAKING:
+			return "voice"
+		_:
+			return "playback"
+
+func _uses_remote_bridge() -> bool:
+	return OS.get_name() == "iOS"
+
+func _should_request_wake_listener() -> bool:
+	return not _uses_remote_bridge()
+
+func _resolve_bridge_base_url() -> String:
+	if not _uses_remote_bridge():
+		return BRIDGE_BASE_URL
+	var configured := str(ProjectSettings.get_setting(IOS_BRIDGE_BASE_URL_SETTING, DEFAULT_IOS_BRIDGE_BASE_URL)).strip_edges()
+	if configured.is_empty():
+		return DEFAULT_IOS_BRIDGE_BASE_URL
+	return configured
