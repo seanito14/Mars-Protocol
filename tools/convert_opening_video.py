@@ -15,14 +15,14 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_SOURCE = Path("/Users/z/Downloads/open.mp4")
-DEFAULT_OUTPUT = Path("/Users/z/Desktop/ProjectMarsHighFidelity/assets/video/opening_scene.ogv")
+DEFAULT_SOURCE = Path("/Users/z/Desktop/Mars-Protocol/build/opening_flyover.avi")
+DEFAULT_OUTPUT = Path("/Users/z/Desktop/Mars-Protocol/assets/video/opening_scene.ogv")
 FFMPEG4_PATH = Path("/opt/homebrew/opt/ffmpeg@4/bin/ffmpeg")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Convert the Project Mars opening reference clip into a Godot-playable .ogv asset."
+        description="Convert the Mars flyover source clip into a Godot-playable .ogv asset."
     )
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE, help="Path to the reference .mp4 clip.")
     parser.add_argument(

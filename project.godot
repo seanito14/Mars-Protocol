@@ -27,6 +27,8 @@ driver/enable_input=true
 
 EventBus="*res://scripts/event_bus.gd"
 GameState="*res://scripts/game_state.gd"
+RuntimeFeatures="*res://scripts/runtime_features.gd"
+AirPodsHeadTracker="*res://scripts/airpods_head_tracker.gd"
 VoiceAlertService="*res://scripts/voice_alert_service.gd"
 MonetizationService="*res://scripts/monetization_service.gd"
 CommandServer="*res://scripts/command_server.gd"
@@ -45,7 +47,7 @@ pointing/emulate_touch_from_mouse=true
 
 [rendering]
 
-renderer/rendering_method="mobile"
+renderer/rendering_method="forward_plus"
 textures/vram_compression/import_etc2_astc=true
 anti_aliasing/quality/msaa_3d=2
 anti_aliasing/quality/screen_space_aa=1

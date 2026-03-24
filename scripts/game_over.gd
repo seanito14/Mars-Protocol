@@ -236,7 +236,7 @@ func _on_deploy_pressed() -> void:
 			GameState.reset_session_stats()
 		if GameState.has_method("save_game"):
 			GameState.save_game()
-	get_tree().change_scene_to_file("res://scenes/landing_valley.tscn")
+	get_tree().change_scene_to_file("res://scenes/jezero_landing.tscn")
 
 func _on_menu_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")

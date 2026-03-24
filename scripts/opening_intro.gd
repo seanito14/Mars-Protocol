@@ -3,9 +3,13 @@ extends Control
 
 const DEFAULT_VIDEO_SIZE := Vector2i(1920, 1080)
 const EDGE_SHADER := preload("res://shaders/intro_edge_fill.gdshader")
+const DIRECT_PRELOAD_SCENE_PATHS := {
+	"res://scenes/landing_valley.tscn": true,
+	"res://scenes/jezero_landing.tscn": true,
+}
 
 @export_file("*.ogv") var intro_stream_path: String = "res://assets/video/opening_scene.ogv"
-@export_file("*.tscn") var next_scene_path: String = "res://scenes/landing_valley.tscn"
+@export_file("*.tscn") var next_scene_path: String = "res://scenes/jezero_landing.tscn"
 @export_range(0.0, 10.0, 0.1) var skip_delay_seconds: float = 1.0
 @export_range(0.05, 5.0, 0.05) var fade_duration: float = 0.4
 @export_enum("mirror_blur", "none") var adaptive_fill_mode: String = "mirror_blur"
@@ -95,7 +99,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _build_ui() -> void:
 	_background_rect = ColorRect.new()
-	_background_rect.color = Color.BLACK
+	_background_rect.color = MarsExteriorProfile.INTRO_BACKGROUND_COLOR
 	_background_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_background_rect)
 
@@ -137,13 +141,17 @@ func _build_ui() -> void:
 	_skip_hint_label.text = "Tap, click, or press a button to skip"
 	_skip_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_skip_hint_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	_skip_hint_label.add_theme_font_size_override("font_size", 16)
+	_skip_hint_label.add_theme_color_override("font_color", MarsExteriorProfile.INTRO_HINT_COLOR)
+	_skip_hint_label.add_theme_color_override("font_outline_color", Color(0.01, 0.01, 0.01, 0.72))
+	_skip_hint_label.add_theme_constant_override("outline_size", 4)
 	_skip_hint_label.modulate = Color(1.0, 1.0, 1.0, 0.0)
 	_skip_hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_skip_hint_label)
 
 	_fade_rect = ColorRect.new()
 	_fade_rect.name = "FadeRect"
-	_fade_rect.color = Color.BLACK
+	_fade_rect.color = MarsExteriorProfile.INTRO_BACKGROUND_COLOR
 	_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_fade_rect)
 
@@ -267,9 +275,9 @@ func _begin_next_scene_preload() -> void:
 		_next_scene_preload_failed = true
 		return
 
-	# `landing_valley` currently loads more reliably through a direct PackedScene
-	# fetch than through threaded scene preloading.
-	if next_scene_path == "res://scenes/landing_valley.tscn":
+	# The exterior landing scenes currently load more reliably through a direct
+	# PackedScene fetch than through threaded scene preloading.
+	if DIRECT_PRELOAD_SCENE_PATHS.has(next_scene_path):
 		_next_scene_resource = load(next_scene_path) as PackedScene
 		_next_scene_preload_requested = _next_scene_resource != null
 		_next_scene_preload_failed = _next_scene_resource == null

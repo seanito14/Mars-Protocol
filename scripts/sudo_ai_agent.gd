@@ -29,6 +29,7 @@ const IOS_MASTER_VOLUME_RECOVERY_INTERVAL: float = 1.0
 const GAMEPLAY_SCENE_PATHS := {
 	"res://scenes/hero_demo.tscn": true,
 	"res://scenes/landing_valley.tscn": true,
+	"res://scenes/jezero_landing.tscn": true,
 }
 
 enum AgentState {
@@ -110,8 +111,17 @@ var bridge_tts_fallback_request: HTTPRequest = null
 var pending_agent_fallback_text: String = ""
 var ios_master_volume_recovery_timer: float = 0.0
 
+func _is_runtime_enabled() -> bool:
+	return RuntimeFeatures != null and RuntimeFeatures.is_sudo_ai_enabled()
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	if not _is_runtime_enabled():
+		state = AgentState.OFFLINE
+		display_state_override = "DISABLED"
+		gameplay_voice_enabled = false
+		hot_word_active = false
+		return
 	bridge_base_url = _resolve_bridge_base_url()
 	_ensure_ios_master_output_level()
 
@@ -192,6 +202,8 @@ func _setup_wake_udp_listener() -> void:
 		push_warning("SudoAI: Failed to listen for wake events on UDP port %d." % BRIDGE_WAKE_EVENT_PORT)
 
 func _process(delta: float) -> void:
+	if not _is_runtime_enabled():
+		return
 	_tick_ios_master_output_recovery(delta)
 	_update_scene_gate()
 	if runtime_bootstrapped:
@@ -246,12 +258,18 @@ func _process(delta: float) -> void:
 ## ── Public API ──────────────────────────────────────────────────────────
 
 func notify_gameplay_input_started() -> void:
+	if not _is_runtime_enabled():
+		return
 	_start_gameplay_standby()
 
 func prime_standby_only() -> void:
+	if not _is_runtime_enabled():
+		return
 	_start_gameplay_standby()
 
 func connect_agent() -> void:
+	if not _is_runtime_enabled():
+		return
 	if not gameplay_voice_enabled:
 		return
 	if bridge_signed_url_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
@@ -264,6 +282,8 @@ func connect_agent() -> void:
 		_handle_activation_failure("signed_url_request_failed")
 
 func disconnect_agent() -> void:
+	if not _is_runtime_enabled():
+		return
 	should_reconnect = false
 	_close_socket_quietly("manual_disconnect")
 	_stop_mic()
@@ -296,6 +316,8 @@ func _start_gameplay_standby() -> void:
 			_enable_gameplay_voice()
 
 func start_listening() -> void:
+	if not _is_runtime_enabled():
+		return
 	if state != AgentState.CONNECTED and state != AgentState.LISTENING:
 		return
 	_start_mic()
@@ -305,6 +327,8 @@ func start_listening() -> void:
 	EventBus.sudo_ai_listening_started.emit()
 
 func stop_listening() -> void:
+	if not _is_runtime_enabled():
+		return
 	if state != AgentState.LISTENING:
 		return
 	_stop_mic()
@@ -312,12 +336,16 @@ func stop_listening() -> void:
 	EventBus.sudo_ai_listening_stopped.emit()
 
 func toggle_listening() -> void:
+	if not _is_runtime_enabled():
+		return
 	if state == AgentState.LISTENING:
 		stop_listening()
 	else:
 		start_listening()
 
 func activate_hot_word() -> void:
+	if not _is_runtime_enabled():
+		return
 	if not gameplay_voice_enabled:
 		return
 	if hot_word_active:
@@ -333,6 +361,8 @@ func activate_hot_word() -> void:
 		connect_agent()
 
 func deactivate_hot_word() -> void:
+	if not _is_runtime_enabled():
+		return
 	hot_word_active = false
 	listen_after_activation_greeting = false
 	pending_agent_fallback_text = ""
@@ -355,9 +385,13 @@ func deactivate_hot_word() -> void:
 		_set_state_with_label(AgentState.OFFLINE, "OFFLINE")
 
 func send_text_message(text: String) -> void:
+	if not _is_runtime_enabled():
+		return
 	_send_user_message(text, true)
 
 func send_contextual_update(context: String) -> void:
+	if not _is_runtime_enabled():
+		return
 	pending_scene_context = context
 	if socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		return
@@ -365,9 +399,13 @@ func send_contextual_update(context: String) -> void:
 	socket.send_text(payload)
 
 func set_scene_context(context: String) -> void:
+	if not _is_runtime_enabled():
+		return
 	send_contextual_update(context)
 
 func get_state_label() -> String:
+	if not _is_runtime_enabled():
+		return "DISABLED"
 	if not display_state_override.is_empty():
 		return display_state_override
 	match state:
@@ -397,6 +435,9 @@ func get_output_volume() -> float:
 ## ── Scene / standby control ─────────────────────────────────────────────
 
 func _update_scene_gate() -> void:
+	if not _is_runtime_enabled():
+		gameplay_voice_enabled = false
+		return
 	var scene_changed := _sync_scene_tracking()
 
 	var desired_enabled := _can_enable_voice_for_current_scene()
@@ -494,6 +535,8 @@ func _is_gameplay_scene_path(scene_path: String) -> bool:
 	return bool(GAMEPLAY_SCENE_PATHS.get(scene_path, false))
 
 func _ensure_overlay_present() -> void:
+	if not _is_runtime_enabled():
+		return
 	var current_scene := get_tree().current_scene
 	if current_scene == null:
 		return

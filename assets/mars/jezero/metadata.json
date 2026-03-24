@@ -1,0 +1,32 @@
+{
+  "dataset_name": "USGS Mars 2020 Jezero landing patch",
+  "source_urls": {
+    "hirise_dtm_1m": "https://planetarymaps.usgs.gov/mosaic/mars2020_trn/HiRISE/JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40.tif",
+    "hirise_ortho_25cm": "https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/mars2020_trn/HiRISE/JEZ_hirise_soc_006_orthoMosaic_25cm_Eqc_latTs0_lon0_first.tif",
+    "hirise_ortho_browse_crop_1024": "https://astrogeology.usgs.gov/ckan/dataset/cee23e0f-a7fb-4695-b1c8-f295f09a305f/resource/2784f141-e40a-4291-a67b-0c458077b6ab/download/jez_hirise_soc_006_orthomosaic_25cm_eqc_latts0_lon0_first_crop1024.jpg",
+    "ctx_dem_20m": "https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/mars2020_trn/CTX/ScienceInvestigationMaps_JPL/M20_JezeroCrater_CTXDEM_20m.tif"
+  },
+  "elevation_source": "ctx_dem_20m",
+  "center_lat": 18.4447,
+  "center_lon": 77.4508,
+  "world_size_m": 1320.0,
+  "heightmap_size": 1320,
+  "min_elevation_m": -2583.89501953125,
+  "max_elevation_m": -2546.28271484375,
+  "vertical_offset_m": -2567.420654296875,
+  "spawn_world_xz": [
+    -9.507202426080376,
+    50.53828658074294
+  ],
+  "rover_world_xz": [
+    20.515542077331354,
+    40.530705079605795
+  ],
+  "playability_delta_path": "playability_delta_16.png",
+  "playability_delta_abs_max_m": 0.11606176197528839,
+  "surface_map_path": "albedo_2048.png",
+  "surface_map_strength": 0.42,
+  "surface_map_black_point": 0.04,
+  "surface_map_white_point": 0.84,
+  "generated_from_remote_window_reads": true
+}

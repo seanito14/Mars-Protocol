@@ -16,6 +16,7 @@ var fov_slider: HSlider
 var sensitivity_value_label: Label
 var volume_value_label: Label
 var fov_value_label: Label
+var head_tracking_button: Button
 
 signal resumed
 signal quit_to_menu
@@ -152,6 +153,11 @@ func _build_settings_panel() -> Control:
 	fov_slider.value_changed.connect(_on_fov_changed)
 	vbox.add_child(fov_row)
 
+	head_tracking_button = _create_menu_button("RECENTER HEAD TRACKING")
+	head_tracking_button.pressed.connect(_on_recenter_head_tracking_pressed)
+	vbox.add_child(head_tracking_button)
+	_sync_head_tracking_button_state()
+
 	# Spacer
 	var spacer := Control.new()
 	spacer.custom_minimum_size = Vector2(0, 8)
@@ -238,6 +244,7 @@ func _show_main_panel() -> void:
 func _show_settings_panel() -> void:
 	main_panel.visible = false
 	settings_panel.visible = true
+	_sync_head_tracking_button_state()
 
 func _on_resume_pressed() -> void:
 	resumed.emit()
@@ -269,3 +276,28 @@ func _on_fov_changed(value: float) -> void:
 		var cam := player.get_node("BreathPivot/TiltPivot/PitchPivot/Camera3D")
 		if cam is Camera3D:
 			cam.fov = value
+
+func _on_recenter_head_tracking_pressed() -> void:
+	var tracker := get_node_or_null("/root/AirPodsHeadTracker")
+	if tracker == null or not tracker.has_method("request_recenter"):
+		EventBus.push_mission_log("AirPods head tracking is unavailable on this device.")
+		_sync_head_tracking_button_state()
+		return
+	tracker.call("request_recenter")
+	EventBus.push_mission_log("AirPods head tracking recenter requested.")
+	_sync_head_tracking_button_state()
+
+func _sync_head_tracking_button_state() -> void:
+	if head_tracking_button == null:
+		return
+	var tracker := get_node_or_null("/root/AirPodsHeadTracker")
+	if tracker == null:
+		head_tracking_button.disabled = true
+		head_tracking_button.text = "HEAD TRACKING UNAVAILABLE"
+		return
+
+	head_tracking_button.disabled = false
+	var tracking_active := false
+	if tracker.has_method("is_active"):
+		tracking_active = bool(tracker.call("is_active"))
+	head_tracking_button.text = "RECENTER HEAD TRACKING" if tracking_active else "CALIBRATE HEAD TRACKING"

@@ -30,12 +30,14 @@ const BASECAMP_SPAWN_POSITION := Vector3(0.0, 0.0, 92.0)
 const ROVER_POSITION := Vector3(14.0, 0.0, 70.0)
 const DRONE_POSITION := Vector3(-16.0, 0.0, 68.0)
 
+@onready var key_light: DirectionalLight3D = $DirectionalLight3D
 @onready var navigation_region: NavigationRegion3D = $NavigationRegion3D
 @onready var terrain: MeshInstance3D = $NavigationRegion3D/Terrain
 @onready var terrain_collision: CollisionShape3D = $NavigationRegion3D/Terrain/StaticBody3D/CollisionShape3D
 @onready var player: CharacterBody3D = $Player
 @onready var rover: CharacterBody3D = $Rover
 @onready var props_root: Node3D = $Props
+@onready var world_environment: WorldEnvironment = $WorldEnvironment
 
 var terrain_noise: FastNoiseLite
 var terrain_size: float = 340.0
@@ -71,6 +73,11 @@ func _cache_terrain_settings() -> void:
 		terrain_noise.fractal_gain = 0.55
 
 func _configure_terrain_visuals() -> void:
+	MarsExteriorProfile.apply_key_light(key_light)
+	if world_environment.environment != null:
+		var environment := world_environment.environment.duplicate(true) as Environment
+		world_environment.environment = environment
+		MarsExteriorProfile.apply_environment(environment)
 	if terrain.material_override is ShaderMaterial:
 		var material := (terrain.material_override as ShaderMaterial).duplicate() as ShaderMaterial
 		terrain.material_override = material

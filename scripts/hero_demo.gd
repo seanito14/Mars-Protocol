@@ -32,6 +32,8 @@ const MESA_MARKER_COUNT: int = 3
 @onready var terrain_collision: CollisionShape3D = $TerrainRoot/Terrain/StaticBody3D/CollisionShape3D
 @onready var player: Node = $Player
 @onready var props_root: Node3D = $Props
+@onready var key_light: DirectionalLight3D = $DirectionalLight3D
+@onready var fill_light: DirectionalLight3D = $FillLight
 @onready var world_environment: WorldEnvironment = $WorldEnvironment
 @onready var player_camera: Camera3D = $Player/BreathPivot/TiltPivot/PitchPivot/Camera3D
 
@@ -74,14 +76,18 @@ func _ready() -> void:
 	focus_hilite.player = player
 	add_child(focus_hilite)
 	_send_sudo_ai_context("Player has spawned in the crater basin. Two wreck sites are visible and a storm front is building on the horizon.")
-	EventBus.push_mission_log("Hero demo ready. Walk the crater, inspect the wreckage, and talk to Sudo AI.")
+	EventBus.push_mission_log("Hero demo ready. Walk the crater, inspect the wreckage, and survey the basin.")
 	_cache_storm_atmosphere_baseline()
-	# Proactively boot SudoAI so it greets the player on scene load
-	# instead of waiting for the first keyboard/mouse input.
-	if SudoAIAgent:
+	if RuntimeFeatures != null and RuntimeFeatures.is_sudo_ai_enabled() and SudoAIAgent:
 		SudoAIAgent.notify_gameplay_input_started()
 
 func _configure_terrain_visuals() -> void:
+	MarsExteriorProfile.apply_key_light(key_light)
+	MarsExteriorProfile.apply_fill_light(fill_light)
+	if world_environment.environment != null:
+		var environment := world_environment.environment.duplicate(true) as Environment
+		world_environment.environment = environment
+		MarsExteriorProfile.apply_environment(environment)
 	if terrain.material_override is ShaderMaterial:
 		var material := (terrain.material_override as ShaderMaterial).duplicate() as ShaderMaterial
 		terrain.material_override = material
@@ -161,7 +167,7 @@ func trigger_manual_scan(hero_player: Node) -> void:
 	if hero_player != null and hero_player.has_method("set_marvin_state"):
 		hero_player.call("set_marvin_state", "SCANNING", result["response_text"])
 	EventBus.agent_response_received.emit(result["response_text"])
-	EventBus.push_mission_log("> SudoAI: %s" % result["response_text"])
+	EventBus.push_mission_log("> System: %s" % result["response_text"])
 
 func inspect_wreck(wreck: Node, hero_player: Node) -> void:
 	if wreck == null or hero_player == null:
@@ -187,12 +193,12 @@ func inspect_wreck(wreck: Node, hero_player: Node) -> void:
 		hero_player.call("set_marvin_state", "INSPECTION COMPLETE", response_text)
 	_send_sudo_ai_context("Player inspected %s." % str(wreck.get("wreck_name")))
 	EventBus.agent_response_received.emit(response_text)
-	EventBus.push_mission_log("> SudoAI: %s" % response_text)
+	EventBus.push_mission_log("> System: %s" % response_text)
 
 func handle_voice_command(text: String) -> Dictionary:
 	var normalized := text.to_lower().strip_edges()
 	if normalized.is_empty():
-		return { "command_id": "empty", "response_text": "Sudo AI here. I didn't catch that command." }
+		return { "command_id": "empty", "response_text": "I didn't catch that command." }
 	if normalized.contains("scan"):
 		return _begin_scan(primary_wreck, player, "voice")
 	if normalized.contains("inspect") or normalized.contains("wreckage"):
@@ -860,7 +866,7 @@ func _begin_scan(target: Node, hero_player: Node, source: String) -> Dictionary:
 	return { "command_id": "scan", "response_text": "Scanning locked. Highlighting %s on your visor now." % str(target.get("wreck_name")) }
 
 func _send_sudo_ai_context(text: String) -> void:
-	if SudoAIAgent and SudoAIAgent.has_method("set_scene_context"):
+	if RuntimeFeatures != null and RuntimeFeatures.is_sudo_ai_enabled() and SudoAIAgent and SudoAIAgent.has_method("set_scene_context"):
 		SudoAIAgent.set_scene_context(text)
 
 func _handle_inspect_command() -> Dictionary:

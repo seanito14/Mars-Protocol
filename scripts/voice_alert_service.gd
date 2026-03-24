@@ -15,7 +15,7 @@ var _bridge_url: String = "http://127.0.0.1:8765"
 
 func _ready() -> void:
 	var sudo_agent := get_node_or_null("/root/SudoAIAgent")
-	if sudo_agent != null:
+	if sudo_agent != null and RuntimeFeatures != null and RuntimeFeatures.is_sudo_ai_enabled():
 		_bridge_url = str(sudo_agent.get("bridge_base_url"))
 	_audio_player = AudioStreamPlayer.new()
 	_audio_player.bus = "Voice" if AudioServer.get_bus_index("Voice") >= 0 else "Master"
@@ -34,7 +34,9 @@ func speak(event_id: String, text: String) -> void:
 	print("VoiceAlertService[%s]: %s" % [event_id, text])
 	var event_bus := get_node_or_null("/root/EventBus")
 	if event_bus != null:
-		event_bus.push_mission_log("[VOICE] %s" % text)
+		event_bus.push_mission_log("[SYSTEM] %s" % text)
+	if RuntimeFeatures == null or not RuntimeFeatures.is_voice_bridge_enabled():
+		return
 	_queue_tts(text)
 
 func _queue_tts(text: String) -> void:

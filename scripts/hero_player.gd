@@ -72,16 +72,18 @@ var interact_was_pressed: bool = false
 var active_waypoint_target: Node3D = null
 var active_waypoint_label: String = ""
 var scan_target_label: String = "Wreck Alpha"
-var marvin_state: String = "STANDBY"
-var marvin_message: String = "Sudo AI online. Move toward the wreckage and request a scan."
+var marvin_state: String = "MISSION READY"
+var marvin_message: String = "Suit telemetry online. Move toward the rover and inspect the terrain."
 var last_transcript: String = ""
-var sudo_ai_state: String = "OFFLINE"
+var sudo_ai_state: String = "DISABLED"
 var left_arm_root: Node3D
 var left_hand_root: Node3D
 var scanner_root: Node3D
 var visor_glass_material: StandardMaterial3D
 var scanner_screen_material: StandardMaterial3D
 var storm_dust: GPUParticles3D
+var airpods_head_tracker: Node = null
+var airpods_head_offset: Vector2 = Vector2.ZERO
 
 func _ready() -> void:
 	add_to_group("player")
@@ -92,6 +94,7 @@ func _ready() -> void:
 	ground_clearance = _get_ground_clearance()
 	base_camera_position = camera.position
 	base_camera_fov = camera.fov
+	airpods_head_tracker = get_node_or_null("/root/AirPodsHeadTracker")
 	_apply_user_settings()
 	_build_suit_rig()
 	_build_storm_dust_particles()
@@ -101,9 +104,10 @@ func _ready() -> void:
 	EventBus.conversation_disconnected.connect(_on_conversation_disconnected)
 	EventBus.scan_started.connect(_on_scan_started)
 	EventBus.scan_completed.connect(_on_scan_completed)
-	EventBus.sudo_ai_connected.connect(_on_sudo_ai_connected)
-	EventBus.sudo_ai_disconnected.connect(_on_sudo_ai_disconnected)
-	EventBus.sudo_ai_state_changed.connect(_on_sudo_ai_state_changed)
+	if RuntimeFeatures != null and RuntimeFeatures.is_sudo_ai_enabled():
+		EventBus.sudo_ai_connected.connect(_on_sudo_ai_connected)
+		EventBus.sudo_ai_disconnected.connect(_on_sudo_ai_disconnected)
+		EventBus.sudo_ai_state_changed.connect(_on_sudo_ai_state_changed)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
@@ -136,13 +140,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			request_interaction()
 		elif key_event.physical_keycode == KEY_T:
 			request_scan()
-		elif key_event.physical_keycode == KEY_F:
+		elif key_event.physical_keycode == KEY_F and RuntimeFeatures != null and RuntimeFeatures.is_sudo_ai_enabled():
 			_toggle_sudo_ai_activation()
 		return
 
 	if event is InputEventJoypadButton:
 		var joypad_event := event as InputEventJoypadButton
-		if joypad_event.pressed and joypad_event.button_index == JOY_BUTTON_X:
+		if joypad_event.pressed and joypad_event.button_index == JOY_BUTTON_X and RuntimeFeatures != null and RuntimeFeatures.is_sudo_ai_enabled():
 			_toggle_sudo_ai_activation()
 			get_viewport().set_input_as_handled()
 
@@ -239,6 +243,8 @@ func request_scan() -> void:
 		MonetizationService.purchase_tier("pro")
 
 func _notify_sudo_gameplay_started() -> void:
+	if RuntimeFeatures == null or not RuntimeFeatures.is_sudo_ai_enabled():
+		return
 	if not SudoAIAgent:
 		return
 	if get_tree().paused:
@@ -250,6 +256,8 @@ func _notify_sudo_gameplay_started() -> void:
 	SudoAIAgent.notify_gameplay_input_started()
 
 func _toggle_sudo_ai_activation() -> void:
+	if RuntimeFeatures == null or not RuntimeFeatures.is_sudo_ai_enabled():
+		return
 	if not SudoAIAgent:
 		return
 	if SudoAIAgent.hot_word_active:
@@ -432,7 +440,7 @@ func _update_interaction_focus() -> void:
 		focused_prompt = str(focused_interactable.call("get_interaction_prompt")) if focused_interactable.has_method("get_interaction_prompt") else ""
 	else:
 		focused_name = "Open Terrain"
-		focused_prompt = "Walk the crater, inspect the wreckage, and talk to Sudo AI."
+		focused_prompt = "Walk the crater, inspect the wreckage, and survey the landing site."
 
 func _handle_interaction_input() -> void:
 	var keyboard_interact := Input.is_physical_key_pressed(KEY_E)
@@ -482,6 +490,7 @@ func _update_presentation(delta: float, input_dir: Vector2, is_grounded: bool, i
 		lerp_angle(tilt_pivot.rotation.z, target_tilt.z, delta * MOTION_SMOOTHNESS)
 	)
 	pitch_pivot.rotation.x = look_pitch
+	_apply_airpods_head_look()
 	camera.fov = lerpf(camera.fov, base_camera_fov + (RUN_FOV_BOOST * move_strength if is_running else 0.0), delta * MOTION_SMOOTHNESS)
 
 	if left_arm_root != null:
@@ -695,6 +704,9 @@ func _get_heading_label() -> String:
 	return labels[index]
 
 func _get_elevation_meters() -> float:
+	var current_scene := get_tree().current_scene
+	if current_scene != null and current_scene.has_method("get_ground_elevation_meters"):
+		return float(current_scene.call("get_ground_elevation_meters", global_position.x, global_position.z))
 	var ground_height := _get_ground_height() - ground_clearance
 	return (ground_height - 42.0) * 8.0
 
@@ -703,11 +715,11 @@ func _on_transcript_received(text: String) -> void:
 	marvin_state = "PROCESSING"
 
 func _on_agent_response_received(text: String) -> void:
-	marvin_state = "SUDO AI LINKED"
+	marvin_state = "SYSTEM UPDATE"
 	marvin_message = text
 
 func _on_conversation_connected(mode: String) -> void:
-	marvin_state = "VOICE %s" % mode.to_upper()
+	marvin_state = "LINK %s" % mode.to_upper()
 
 func _on_conversation_disconnected(reason: String) -> void:
 	marvin_state = reason.to_upper()
@@ -721,11 +733,26 @@ func _on_scan_completed(target_name: String) -> void:
 	marvin_state = "SCAN COMPLETE"
 
 func _on_sudo_ai_connected() -> void:
+	if RuntimeFeatures == null or not RuntimeFeatures.is_sudo_ai_enabled():
+		return
 	sudo_ai_state = "SUDO AI ONLINE"
 	EventBus.push_mission_log("[SUDO AI] Connected to ElevenLabs agent.")
 
 func _on_sudo_ai_disconnected(_reason: String) -> void:
+	if RuntimeFeatures == null or not RuntimeFeatures.is_sudo_ai_enabled():
+		return
 	sudo_ai_state = "SUDO AI OFFLINE"
 
 func _on_sudo_ai_state_changed(state_text: String) -> void:
+	if RuntimeFeatures == null or not RuntimeFeatures.is_sudo_ai_enabled():
+		return
 	sudo_ai_state = "SUDO AI: %s" % state_text
+
+func _apply_airpods_head_look() -> void:
+	var target_offset := Vector2.ZERO
+	if airpods_head_tracker != null and is_instance_valid(airpods_head_tracker):
+		if airpods_head_tracker.has_method("is_active") and bool(airpods_head_tracker.call("is_active")):
+			if airpods_head_tracker.has_method("get_offsets_rad"):
+				target_offset = airpods_head_tracker.call("get_offsets_rad")
+	airpods_head_offset = target_offset
+	camera.rotation = Vector3(-airpods_head_offset.y, airpods_head_offset.x, 0.0)

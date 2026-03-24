@@ -89,9 +89,7 @@ func _ready() -> void:
 	_prepare_hud_reveal()
 	_send_sudo_ai_context("Player has landed in the strict-copy valley. The rover is parked in the mid-ground corridor and the landing basin is clear for exploration.")
 	EventBus.push_mission_log("Landing complete. Explore the valley.")
-	# Proactively boot SudoAI so it greets the player on scene load
-	# instead of waiting for the first keyboard/mouse input.
-	if SudoAIAgent:
+	if RuntimeFeatures != null and RuntimeFeatures.is_sudo_ai_enabled() and SudoAIAgent:
 		SudoAIAgent.notify_gameplay_input_started()
 
 func get_ground_height(x: float, z: float) -> float:
@@ -114,7 +112,7 @@ func get_storm_intensity(_world_position: Vector3, _view_direction: Vector3) -> 
 func handle_voice_command(text: String) -> Dictionary:
 	var normalized := text.to_lower().strip_edges()
 	if normalized.is_empty():
-		return {"command_id": "empty", "response_text": "Sudo AI here. I did not catch that request."}
+		return {"command_id": "empty", "response_text": "I did not catch that request."}
 	if normalized.contains("status"):
 		return _handle_status_command()
 	if normalized.contains("rover") or normalized.contains("waypoint") or normalized.contains("mark"):
@@ -596,7 +594,7 @@ func _handle_status_command() -> Dictionary:
 	return {"command_id": "status", "response_text": status_text}
 
 func _send_sudo_ai_context(text: String) -> void:
-	if SudoAIAgent and SudoAIAgent.has_method("set_scene_context"):
+	if RuntimeFeatures != null and RuntimeFeatures.is_sudo_ai_enabled() and SudoAIAgent and SudoAIAgent.has_method("set_scene_context"):
 		SudoAIAgent.set_scene_context(text)
 
 func _smoothstep(edge0: float, edge1: float, value: float) -> float:

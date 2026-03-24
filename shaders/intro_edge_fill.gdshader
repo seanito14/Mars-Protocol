@@ -31,10 +31,10 @@ vec4 sample_blur(vec2 uv) {
 
 void fragment() {
 	vec4 color = sample_blur(UV);
-	color.rgb = mix(color.rgb, vec3(0.84, 0.53, 0.39), 0.18);
-	color.rgb *= 0.84;
+	color.rgb = mix(color.rgb, vec3(0.68, 0.60, 0.53), 0.12);
+	color.rgb *= 0.76;
 	float vignette = smoothstep(0.0, 0.95, max(abs(UV.x - 0.5), abs(UV.y - 0.5)) * 1.85);
-	color.rgb *= 1.0 - (vignette * 0.12);
-	color.a = 0.94;
+	color.rgb *= 1.0 - (vignette * 0.08);
+	color.a = 0.90;
 	COLOR = color;
 }

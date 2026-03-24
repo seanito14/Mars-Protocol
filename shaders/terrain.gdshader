@@ -3,19 +3,23 @@ shader_type spatial;
 // ── Texture inputs ────────────────────────────────────────────────────────────
 uniform sampler2D height_map;
 uniform sampler2D terrain_data;
+uniform sampler2D surface_map;
 
 // ── Height / scale ────────────────────────────────────────────────────────────
 uniform float height_scale = 90.0;
+uniform float surface_map_strength : hint_range(0.0, 1.0) = 0.0;
+uniform float surface_map_black_point : hint_range(0.0, 1.0) = 0.0;
+uniform float surface_map_white_point : hint_range(0.0, 1.0) = 1.0;
 
 // ── Base terrain colours ──────────────────────────────────────────────────────
-uniform vec3 sand_color         : source_color = vec3(0.76, 0.42, 0.20);   // fine aeolian silt
-uniform vec3 sand_shadow_color  : source_color = vec3(0.44, 0.22, 0.10);   // shadow hollows
-uniform vec3 duricrust_color    : source_color = vec3(0.52, 0.26, 0.11);   // hardened surface crust
-uniform vec3 strata_dark_color  : source_color = vec3(0.26, 0.11, 0.06);   // deep basalt
-uniform vec3 strata_mid_color   : source_color = vec3(0.46, 0.21, 0.10);   // iron-oxide sienna
-uniform vec3 strata_bright_color: source_color = vec3(0.68, 0.29, 0.09);   // ochre caprock
-uniform vec3 cliff_tint         : source_color = vec3(0.38, 0.17, 0.08);   // cliff face wash
-uniform vec3 haze_tint          : source_color = vec3(0.88, 0.61, 0.44);   // atmospheric haze
+uniform vec3 sand_color         : source_color = vec3(0.54, 0.35, 0.24);   // fine aeolian silt
+uniform vec3 sand_shadow_color  : source_color = vec3(0.25, 0.16, 0.12);   // shadow hollows
+uniform vec3 duricrust_color    : source_color = vec3(0.42, 0.26, 0.18);   // hardened surface crust
+uniform vec3 strata_dark_color  : source_color = vec3(0.15, 0.10, 0.08);   // deep basalt
+uniform vec3 strata_mid_color   : source_color = vec3(0.32, 0.21, 0.16);   // iron-oxide sienna
+uniform vec3 strata_bright_color: source_color = vec3(0.49, 0.31, 0.22);   // brighter ejecta / caprock
+uniform vec3 cliff_tint         : source_color = vec3(0.36, 0.24, 0.18);   // cliff face wash
+uniform vec3 haze_tint          : source_color = vec3(0.62, 0.54, 0.49);   // atmospheric haze
 
 // ── Slope blending ────────────────────────────────────────────────────────────
 uniform float slope_threshold_degrees    : hint_range(10.0, 80.0)  = 40.0;
@@ -27,23 +31,23 @@ uniform float detail_variation_scale : hint_range(0.001, 0.2)   = 0.065;
 
 // ── Aeolian ripple ────────────────────────────────────────────────────────────
 uniform float ripple_scale    : hint_range(0.001, 0.2)  = 0.052;
-uniform float ripple_strength : hint_range(0.0, 1.0)    = 0.40;
+uniform float ripple_strength : hint_range(0.0, 1.0)    = 0.24;
 uniform vec2  wind_direction                             = vec2(0.72, 0.38); // normalised XZ
 
 // ── Sedimentary strata ────────────────────────────────────────────────────────
-uniform float strata_frequency   : hint_range(1.0,  64.0) = 22.0;
-uniform float strata_contrast    : hint_range(0.0,  1.0)  = 0.82;
-uniform float strata_warp        : hint_range(0.0,  4.0)  = 1.4;   // adds horizontal bend
+uniform float strata_frequency   : hint_range(1.0,  64.0) = 18.0;
+uniform float strata_contrast    : hint_range(0.0,  1.0)  = 0.74;
+uniform float strata_warp        : hint_range(0.0,  4.0)  = 1.1;   // adds horizontal bend
 uniform float strata_band_count  : hint_range(2.0,  8.0)  = 4.0;   // colour bands per cycle
 
 // ── Surface micro-texture ─────────────────────────────────────────────────────
-uniform float grit_strength : hint_range(0.0, 1.0)   = 0.42;
+uniform float grit_strength : hint_range(0.0, 1.0)   = 0.32;
 uniform float grit_scale    : hint_range(0.001, 0.4)  = 0.19;
 uniform float crack_scale   : hint_range(0.001, 0.1)  = 0.028;  // duricrust cracking
-uniform float crack_depth   : hint_range(0.0, 1.0)    = 0.38;   // how dark cracks go
+uniform float crack_depth   : hint_range(0.0, 1.0)    = 0.30;   // how dark cracks go
 
 // ── Wind scour ────────────────────────────────────────────────────────────────
-uniform float scour_strength : hint_range(0.0, 1.0)  = 0.28;
+uniform float scour_strength : hint_range(0.0, 1.0)  = 0.16;
 uniform float scour_scale    : hint_range(0.001, 0.1) = 0.031;
 
 // ── Specular / roughness ──────────────────────────────────────────────────────
@@ -52,9 +56,9 @@ uniform float roughness_rock : hint_range(0.0, 1.0) = 0.84;
 uniform float specular_rock  : hint_range(0.0, 1.0) = 0.06;    // slight feldspar glint
 
 // ── Atmospheric distance fade ─────────────────────────────────────────────────
-uniform float distance_fade_start : hint_range(100.0, 2000.0) = 600.0;
-uniform float distance_fade_end   : hint_range(100.0, 4000.0) = 1400.0;
-uniform float distance_fog_max    : hint_range(0.0, 1.0)      = 0.48;
+uniform float distance_fade_start : hint_range(100.0, 2000.0) = 960.0;
+uniform float distance_fade_end   : hint_range(100.0, 4000.0) = 2100.0;
+uniform float distance_fog_max    : hint_range(0.0, 1.0)      = 0.22;
 
 // ── Varyings ──────────────────────────────────────────────────────────────────
 varying float v_height;
@@ -159,7 +163,7 @@ void fragment() {
 	float ripple_mix     = clamp(ripple_along * 0.7 + ripple_cross * 0.3, 0.0, 1.0);
 
 	// Brightness modulation: crest = lighter, trough = darker
-	float ripple_bright  = mix(0.84, 1.12, ripple_mix * ripple_strength);
+	float ripple_bright  = mix(0.78, 1.06, ripple_mix * ripple_strength);
 	vec3  sand_base      = mix(sand_shadow_color, sand_color,
 	                           clamp(0.42 + dust01 * 0.28 + broad * 0.30, 0.0, 1.0));
 	vec3  sand_albedo    = sand_base * ripple_bright;
@@ -218,15 +222,26 @@ void fragment() {
 	vec3 base_color = mix(sand_albedo, rock_albedo, rock_mask);
 	base_color = mix(base_color, scour_dark, scour_streak * scour_mask);
 
+	if (surface_map_strength > 0.001) {
+		vec3 surface_sample = texture(surface_map, UV).rgb;
+		float surface_tone = dot(surface_sample, vec3(0.299, 0.587, 0.114));
+		float white_span = max(surface_map_white_point - surface_map_black_point, 0.001);
+		surface_tone = clamp((surface_tone - surface_map_black_point) / white_span, 0.0, 1.0);
+		float surface_mod = mix(0.64, 1.18, surface_tone);
+		base_color *= mix(1.0, surface_mod, surface_map_strength);
+		vec3 surface_bias = mix(vec3(0.76), clamp(surface_sample * 1.08, 0.0, 1.0), 0.18);
+		base_color = mix(base_color, base_color * surface_bias, surface_map_strength * 0.42);
+	}
+
 	// Ambient occlusion approximation via grit cavity
 	float cavity = (1.0 - grit.b) * grit_strength;
-	base_color *= 1.0 - cavity * mix(0.07, 0.22, rock_mask);
+	base_color *= 1.0 - cavity * mix(0.12, 0.30, rock_mask);
 
 	// ─── Atmospheric distance fade ───────────────────────────────────────────
 	float cam_dist  = length(wp - CAMERA_POSITION_WORLD);
 	float dist_fade = clamp((cam_dist - distance_fade_start) /
 	                        max(distance_fade_end - distance_fade_start, 1.0), 0.0, distance_fog_max);
-	base_color = mix(base_color, haze_tint, dist_fade * 0.60);
+	base_color = mix(base_color, haze_tint, dist_fade * 0.24);
 
 	// ─── Normal map — two-octave layered relief ──────────────────────────────
 	// Coarse macro bumps

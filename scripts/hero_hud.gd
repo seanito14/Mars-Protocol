@@ -2,24 +2,25 @@ class_name HeroHUD
 extends Control
 
 const VirtualJoystickScript = preload("res://scripts/virtual_joystick.gd")
+const VISUAL_PROFILE = preload("res://scripts/mars_exterior_profile.gd")
 
-const C_FRAME_DARK := Color(0.1, 0.055, 0.03, 0.985)
-const C_FRAME_MID := Color(0.3, 0.16, 0.08, 0.92)
-const C_FRAME_GLOW := Color(0.58, 0.34, 0.18, 0.32)
-const C_SLOT_GLOW := Color(1.0, 0.63, 0.24, 0.72)
-const C_AMBER := Color(1.0, 0.63, 0.24, 0.92)
+const C_FRAME_DARK := VISUAL_PROFILE.HUD_FRAME_DARK
+const C_FRAME_MID := VISUAL_PROFILE.HUD_FRAME_MID
+const C_FRAME_GLOW := VISUAL_PROFILE.HUD_FRAME_GLOW
+const C_SLOT_GLOW := VISUAL_PROFILE.HUD_SLOT_GLOW
+const C_ALERT := VISUAL_PROFILE.HUD_ALERT
 
-const C_TEXT := Color(1.0, 0.91, 0.82, 0.98)
-const C_TEXT_DIM := Color(1.0, 0.77, 0.58, 0.7)
-const C_PANEL_BG := Color(0.12, 0.08, 0.06, 0.2)
-const C_LINE := Color(1.0, 0.58, 0.22, 0.4)
-const C_RETICLE := Color(1.0, 0.62, 0.22, 0.42)
-const C_GRID_FAINT := Color(1.0, 0.62, 0.22, 0.08)
-const C_COMPASS := Color(1.0, 0.8, 0.58, 0.88)
-const C_GLASS_EDGE := Color(1.0, 0.7, 0.34, 0.46)
-const C_GLASS_SHEEN := Color(1.0, 0.8, 0.64, 0.08)
-const C_JOYSTICK_RING := Color(1.0, 0.58, 0.22, 0.22)
-const C_JOYSTICK_KNOB := Color(1.0, 0.74, 0.44, 0.28)
+const C_TEXT := VISUAL_PROFILE.HUD_TEXT
+const C_TEXT_DIM := VISUAL_PROFILE.HUD_TEXT_DIM
+const C_PANEL_BG := VISUAL_PROFILE.HUD_PANEL_BG
+const C_LINE := VISUAL_PROFILE.HUD_LINE
+const C_RETICLE := VISUAL_PROFILE.HUD_RETICLE
+const C_GRID_FAINT := VISUAL_PROFILE.HUD_GRID_FAINT
+const C_COMPASS := VISUAL_PROFILE.HUD_COMPASS
+const C_GLASS_EDGE := VISUAL_PROFILE.HUD_GLASS_EDGE
+const C_GLASS_SHEEN := VISUAL_PROFILE.HUD_GLASS_SHEEN
+const C_JOYSTICK_RING := VISUAL_PROFILE.HUD_JOYSTICK_RING
+const C_JOYSTICK_KNOB := VISUAL_PROFILE.HUD_JOYSTICK_KNOB
 
 var player: HeroPlayer = null
 
@@ -125,11 +126,14 @@ func _process(_delta: float) -> void:
 		telemetry_integrity_label.text = "SUIT  %03d%%" % clampi(int(round(s_pct)), 0, 100)
 		telemetry_rad_label.text = "RAD  %03d%%" % clampi(int(round(rad_pct)), 0, 100)
 
-		br_channel_label.text = "Channel"
+		br_channel_label.text = "Conditions"
 		br_fiction_label.text = "%s   %s" % [str(snap.get("storm_eta_label", "Calm")), str(snap.get("scan_target_label", "Valley"))]
 		br_id_label.text = "%03d" % clone_iteration
 		compass_heading_label.text = "%03d° %s" % [posmod(heading_degrees, 360), heading_label]
 		compass_wp_label.text = "SOL 247   CLONE %03d" % clone_iteration
+		telemetry_o2_label.add_theme_color_override("font_color", C_ALERT if oxygen_pct <= 35.0 else C_TEXT)
+		telemetry_integrity_label.add_theme_color_override("font_color", C_ALERT if s_pct <= 35.0 else C_TEXT)
+		telemetry_rad_label.add_theme_color_override("font_color", C_ALERT if rad_pct >= 60.0 else C_TEXT)
 
 		var show_prompt := false
 		var fi: Variant = player.get("focused_interactable")
@@ -149,7 +153,7 @@ func _process(_delta: float) -> void:
 
 	if sudo_touch_button != null:
 		sudo_touch_button.visible = _should_show_touch_controls()
-		if SudoAIAgent != null and SudoAIAgent.hot_word_active:
+		if RuntimeFeatures != null and RuntimeFeatures.is_sudo_ai_enabled() and SudoAIAgent != null and SudoAIAgent.hot_word_active:
 			sudo_touch_button.text = "END SUDO"
 		else:
 			sudo_touch_button.text = "SUDO"
@@ -207,7 +211,8 @@ func _build_hud() -> void:
 	_build_touch_area()
 	_build_virtual_joysticks()
 	_build_upgrade_touch_button()
-	_build_sudo_touch_button()
+	if RuntimeFeatures != null and RuntimeFeatures.is_sudo_ai_enabled():
+		_build_sudo_touch_button()
 
 func _build_top_left() -> void:
 	top_left_rail = Control.new()
@@ -277,7 +282,7 @@ func _build_bottom_right() -> void:
 	bottom_right_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bottom_right_panel)
 
-	br_channel_label = _make_label("Channel", 14, C_TEXT_DIM)
+	br_channel_label = _make_label("Conditions", 14, C_TEXT_DIM)
 	br_channel_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	bottom_right_panel.add_child(br_channel_label)
 
@@ -337,7 +342,7 @@ func _build_telemetry_panels() -> void:
 	left_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	telemetry_left.add_child(left_panel)
 
-	telemetry_o2_label = _make_label("O2  100%", 16, C_AMBER)
+	telemetry_o2_label = _make_label("O2  100%", 16, C_TEXT)
 	telemetry_left.add_child(telemetry_o2_label)
 
 	telemetry_integrity_label = _make_label("SUIT  100%", 15, C_TEXT)
@@ -353,7 +358,7 @@ func _build_telemetry_panels() -> void:
 	right_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	telemetry_right.add_child(right_panel)
 
-	telemetry_rad_label = _make_label("RAD  000%", 16, C_AMBER)
+	telemetry_rad_label = _make_label("RAD  000%", 16, C_TEXT)
 	telemetry_rad_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	telemetry_right.add_child(telemetry_rad_label)
 
@@ -379,7 +384,7 @@ func _build_sudo_touch_button() -> void:
 	sudo_touch_button.text = "SUDO"
 	sudo_touch_button.add_theme_stylebox_override("normal", _make_touch_button_style(Color(C_PANEL_BG.r, C_PANEL_BG.g, C_PANEL_BG.b, 0.38)))
 	sudo_touch_button.add_theme_stylebox_override("hover", _make_touch_button_style(Color(C_PANEL_BG.r, C_PANEL_BG.g, C_PANEL_BG.b, 0.5)))
-	sudo_touch_button.add_theme_stylebox_override("pressed", _make_touch_button_style(Color(C_AMBER.r, C_AMBER.g, C_AMBER.b, 0.28)))
+	sudo_touch_button.add_theme_stylebox_override("pressed", _make_touch_button_style(Color(C_ALERT.r, C_ALERT.g, C_ALERT.b, 0.28)))
 	sudo_touch_button.add_theme_color_override("font_color", C_TEXT)
 	sudo_touch_button.add_theme_font_size_override("font_size", 16)
 	sudo_touch_button.pressed.connect(_on_sudo_touch_button_pressed)
@@ -394,7 +399,7 @@ func _build_upgrade_touch_button() -> void:
 	upgrade_touch_button.text = "UPGRADE"
 	upgrade_touch_button.add_theme_stylebox_override("normal", _make_touch_button_style(Color(C_PANEL_BG.r, C_PANEL_BG.g, C_PANEL_BG.b, 0.38)))
 	upgrade_touch_button.add_theme_stylebox_override("hover", _make_touch_button_style(Color(C_PANEL_BG.r, C_PANEL_BG.g, C_PANEL_BG.b, 0.5)))
-	upgrade_touch_button.add_theme_stylebox_override("pressed", _make_touch_button_style(Color(C_AMBER.r, C_AMBER.g, C_AMBER.b, 0.28)))
+	upgrade_touch_button.add_theme_stylebox_override("pressed", _make_touch_button_style(Color(C_ALERT.r, C_ALERT.g, C_ALERT.b, 0.28)))
 	upgrade_touch_button.add_theme_color_override("font_color", C_TEXT)
 	upgrade_touch_button.add_theme_font_size_override("font_size", 16)
 	upgrade_touch_button.pressed.connect(_on_upgrade_touch_button_pressed)
@@ -429,7 +434,7 @@ func _draw_joystick_backdrop(target: Control, is_left: bool) -> void:
 	target.draw_circle(center, outer_radius, Color(C_PANEL_BG.r, C_PANEL_BG.g, C_PANEL_BG.b, 0.12))
 	target.draw_arc(center, outer_radius, 0.0, TAU, 64, C_JOYSTICK_RING, 2.0, true)
 	target.draw_arc(center, outer_radius * 0.66, 0.0, TAU, 64, Color(C_JOYSTICK_RING.r, C_JOYSTICK_RING.g, C_JOYSTICK_RING.b, 0.14), 1.2, true)
-	var accent := Color(C_AMBER.r, C_AMBER.g, C_AMBER.b, 0.2 if is_left else 0.16)
+	var accent := Color(C_ALERT.r, C_ALERT.g, C_ALERT.b, 0.16 if is_left else 0.12)
 	target.draw_line(center + Vector2(-outer_radius * 0.42, 0.0), center + Vector2(outer_radius * 0.42, 0.0), accent, 1.2)
 	target.draw_line(center + Vector2(0.0, -outer_radius * 0.42), center + Vector2(0.0, outer_radius * 0.42), accent, 1.2)
 
@@ -437,7 +442,7 @@ func _draw_joystick_knob(target: Control) -> void:
 	var center := target.size * 0.5
 	var radius := minf(target.size.x, target.size.y) * 0.5 - 2.0
 	target.draw_circle(center, radius, C_JOYSTICK_KNOB)
-	target.draw_arc(center, radius, 0.0, TAU, 48, Color(C_AMBER.r, C_AMBER.g, C_AMBER.b, 0.36), 1.4, true)
+	target.draw_arc(center, radius, 0.0, TAU, 48, Color(C_ALERT.r, C_ALERT.g, C_ALERT.b, 0.24), 1.4, true)
 
 func _on_window_resized() -> void:
 	var vp := get_viewport().get_visible_rect().size
@@ -540,21 +545,24 @@ func _on_window_resized() -> void:
 			(child as Control).size = stick_size
 			(child as Control).queue_redraw()
 
-	if sudo_touch_button != null:
+	if sudo_touch_button != null or upgrade_touch_button != null:
 		var button_size := Vector2(160.0, 52.0) * hud_scale
 		var button_gap := 20.0 * hud_scale
+		var has_upgrade := upgrade_touch_button != null and upgrade_touch_button.visible
+		var has_sudo := sudo_touch_button != null and sudo_touch_button.visible
 		var total_width := button_size.x
-		if upgrade_touch_button != null and upgrade_touch_button.visible:
+		if has_upgrade and has_sudo:
 			total_width = button_size.x * 2.0 + button_gap
 		var group_x := (vp.x - total_width) * 0.5
-		if upgrade_touch_button != null:
+		if has_upgrade:
 			upgrade_touch_button.size = button_size
 			upgrade_touch_button.position = Vector2(group_x, vp.y - button_size.y - maxf(28.0, vp.y * 0.075))
-		sudo_touch_button.size = button_size
-		var sudo_x := group_x
-		if upgrade_touch_button != null and upgrade_touch_button.visible:
-			sudo_x += button_size.x + button_gap
-		sudo_touch_button.position = Vector2(sudo_x, vp.y - button_size.y - maxf(28.0, vp.y * 0.075))
+		if has_sudo:
+			sudo_touch_button.size = button_size
+			var sudo_x := group_x
+			if has_upgrade:
+				sudo_x += button_size.x + button_gap
+			sudo_touch_button.position = Vector2(sudo_x, vp.y - button_size.y - maxf(28.0, vp.y * 0.075))
 
 	_apply_font_scale()
 
@@ -639,17 +647,17 @@ func _draw_visor_frame(vp: Vector2, layout: Dictionary) -> void:
 	draw_colored_polygon(lower_left_pod, C_FRAME_DARK)
 	draw_colored_polygon(lower_right_pod, C_FRAME_DARK)
 
-	draw_polyline(top_border, C_FRAME_GLOW, 4.0, true)
-	draw_polyline(left_border, C_FRAME_GLOW, 4.0, true)
-	draw_polyline(right_border, C_FRAME_GLOW, 4.0, true)
-	draw_polyline(bottom_console, C_FRAME_GLOW, 4.0, true)
-	draw_polyline(lower_left_pod, C_FRAME_GLOW, 3.0, true)
-	draw_polyline(lower_right_pod, C_FRAME_GLOW, 3.0, true)
+	draw_polyline(top_border, C_FRAME_GLOW, 2.6, true)
+	draw_polyline(left_border, C_FRAME_GLOW, 2.6, true)
+	draw_polyline(right_border, C_FRAME_GLOW, 2.6, true)
+	draw_polyline(bottom_console, C_FRAME_GLOW, 2.6, true)
+	draw_polyline(lower_left_pod, C_FRAME_GLOW, 2.0, true)
+	draw_polyline(lower_right_pod, C_FRAME_GLOW, 2.0, true)
 
 	var slot_rect := Rect2(x0 + (w * 0.455), h * 0.032, w * 0.09, h * 0.018)
 	draw_rect(slot_rect, C_SLOT_GLOW)
-	draw_rect(Rect2(x0 + (w * 0.42), h * 0.038, w * 0.016, h * 0.008), C_AMBER)
-	draw_rect(Rect2(x0 + (w * 0.564), h * 0.038, w * 0.016, h * 0.008), C_AMBER)
+	draw_rect(Rect2(x0 + (w * 0.42), h * 0.038, w * 0.016, h * 0.008), Color(C_ALERT.r, C_ALERT.g, C_ALERT.b, 0.52))
+	draw_rect(Rect2(x0 + (w * 0.564), h * 0.038, w * 0.016, h * 0.008), Color(C_ALERT.r, C_ALERT.g, C_ALERT.b, 0.52))
 
 	var center_strip_y := h * 0.064
 	draw_line(Vector2(x0 + (w * 0.33), center_strip_y), Vector2(x0 + (w * 0.44), center_strip_y), Color(C_LINE.r, C_LINE.g, C_LINE.b, 0.26), 1.2)
@@ -657,7 +665,7 @@ func _draw_visor_frame(vp: Vector2, layout: Dictionary) -> void:
 
 	var screen_rect := Rect2(x0 + (w * 0.424), h * 0.878, w * 0.152, h * 0.094)
 	draw_rect(screen_rect, Color(0.02, 0.02, 0.02, 0.9))
-	draw_rect(screen_rect, C_FRAME_MID, false, 2.0)
+	draw_rect(screen_rect, C_FRAME_MID, false, 1.2)
 
 	var scr_right := screen_rect.position.x + screen_rect.size.x
 	var cy_k := screen_rect.position.y + screen_rect.size.y * 0.5
@@ -728,7 +736,7 @@ func _make_glass_style() -> StyleBoxFlat:
 	style.corner_radius_top_right = 14
 	style.corner_radius_bottom_right = 14
 	style.corner_radius_bottom_left = 14
-	style.shadow_color = Color(0.0, 0.0, 0.0, 0.2)
+	style.shadow_color = Color(0.0, 0.0, 0.0, 0.12)
 	style.shadow_size = 10
 	style.anti_aliasing = true
 	style.anti_aliasing_size = 1.4
@@ -737,7 +745,7 @@ func _make_glass_style() -> StyleBoxFlat:
 func _make_touch_button_style(bg_color: Color) -> StyleBoxFlat:
 	var style := _make_glass_style()
 	style.bg_color = bg_color
-	style.border_color = Color(C_AMBER.r, C_AMBER.g, C_AMBER.b, 0.66)
+	style.border_color = Color(C_ALERT.r, C_ALERT.g, C_ALERT.b, 0.46)
 	style.corner_radius_top_left = 24
 	style.corner_radius_top_right = 24
 	style.corner_radius_bottom_right = 24
@@ -754,6 +762,8 @@ func _should_show_upgrade_button() -> bool:
 	return _should_show_touch_controls()
 
 func _on_sudo_touch_button_pressed() -> void:
+	if RuntimeFeatures == null or not RuntimeFeatures.is_sudo_ai_enabled():
+		return
 	if SudoAIAgent == null:
 		return
 	if SudoAIAgent.hot_word_active:
@@ -832,7 +842,7 @@ func _on_mission_log_entry(message: String) -> void:
 	var label := Label.new()
 	label.text = "> " + message
 	label.add_theme_font_size_override("font_size", int(13 * hud_scale))
-	label.add_theme_color_override("font_color", Color(0.85, 0.9, 0.95, 1.0))
+	label.add_theme_color_override("font_color", VISUAL_PROFILE.HUD_LOG_TEXT)
 	label.add_theme_color_override("font_outline_color", Color(0.02, 0.02, 0.04, 0.9))
 	label.add_theme_constant_override("outline_size", 4)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
