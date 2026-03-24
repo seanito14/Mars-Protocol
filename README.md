@@ -3,6 +3,8 @@
 
 A high-fidelity, open-world Mars exploration simulation built in **Godot 4.6.1**, combining **agentic AI**, **real-time voice interaction**, and **large-scale terrain systems** into a cinematic, playable experience.
 
+The current Jezero landing build uses **real Mars terrain and imagery data** derived from public USGS Astrogeology / Mars 2020 map products, then converted into runtime assets for Godot.
+
 ---
 
 ## 💡 Core Vision
@@ -78,6 +80,42 @@ Full control and modification of AI systems.
 - Large-scale terrain rendering  
 - Atmospheric scattering + volumetric fog  
 - Multi-agent simulation environment  
+
+---
+
+## 🛰 Real Mars Data
+
+The Jezero landing zone in this branch is no longer just procedural terrain. The runtime pack in `assets/mars/jezero/` is generated from public Mars datasets with `tools/mars_data/build_jezero_patch.py`, then loaded in-game through the raster-backed landing scene.
+
+### Current terrain source stack
+
+- **USGS Astrogeology Science Center — Mars 2020 Terrain Relative Navigation HiRISE DTM Mosaic**  
+  1 m/pixel elevation model used as the high-resolution Jezero terrain reference.  
+  Product page: [USGS Astropedia](https://astrogeology.usgs.gov/search/map/Mars/Mars2020/JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40)  
+  DOI: [10.5066/P9REJ9JN](https://doi.org/10.5066/P9REJ9JN)
+
+- **USGS Astrogeology Science Center — Mars 2020 Terrain Relative Navigation HiRISE Orthorectified Image Mosaic**  
+  0.25 m/pixel orthorectified image mosaic used as the macro surface/albedo reference for the Jezero patch.  
+  Product page: [USGS Astropedia](https://astrogeology.usgs.gov/search/map/mars_2020_terrain_relative_navigation_hirise_orthorectified_image_mosaic)  
+  DOI: [10.5066/P9QJDP48](https://doi.org/10.5066/P9QJDP48)
+
+- **USGS Astrogeology Science Center — Mars 2020 Science Investigation CTX DEM Mosaic**  
+  20 m/pixel contextual DEM covering Jezero crater, used as the broader regional topographic reference for the current terrain workflow.  
+  Product page: [USGS Astropedia](https://astrogeology.usgs.gov/search/map/mars_2020_science_investigation_ctx_dem_mosaic)  
+  Referenced DOI on product page: [10.5066/P906QQT8](https://doi.org/10.5066/P906QQT8)
+
+### Citation / attribution references
+
+- Fergason, R. L., Hare, T. M., Mayer, D. P., Galuszka, D. M., Redding, B. L., Smith, E. D., Shinaman, J. R., Cheng, Y., and Otero, R. E. (2020). *Mars 2020 Terrain Relative Navigation Flight Product Generation: Digital Terrain Model and Orthorectified Image Mosaics.*  
+  Abstract: [LPSC 2020 paper](https://www.hou.usra.edu/meetings/lpsc2020/pdf/2020.pdf)
+
+- McEwen, A. S. et al. (2007). *Mars Reconnaissance Orbiter's High Resolution Imaging Science Experiment (HiRISE).*  
+  DOI: [10.1029/2005JE002605](https://doi.org/10.1029/2005JE002605)
+
+- Malin, M. C. et al. (2007). *Context Camera Investigation on board the Mars Reconnaissance Orbiter.*  
+  DOI: [10.1029/2006JE002808](https://doi.org/10.1029/2006JE002808)
+
+These source products are published by the **USGS Astrogeology Science Center** and are linked from their official Astropedia catalog pages above. When reusing the upstream data, cite the authors and source pages listed with each product.
 
 ---
 
